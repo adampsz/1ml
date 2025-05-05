@@ -1,0 +1,11 @@
+(executable
+ (name FOmega)
+ (libraries one_ml))
+
+(ocamllex Lexer)
+
+(menhir
+ (modules Parser))
+
+(cram
+ (deps ./FOmega.exe ./FOmega.fo))
