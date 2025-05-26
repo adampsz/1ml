@@ -1,42 +1,43 @@
-open One_ml.FOmega
+open OneMl.FOmega
+open OneMl.FOmega.Value
 
 let panic = function
-  | ValPrim (ConstString s) -> failwith (Printf.sprintf "Program panicked: %s" s)
+  | VPrim (ConstString s) -> failwith (Printf.sprintf "Program panicked: %s" s)
   | _ -> failwith "Program panicked: unknown error"
 ;;
 
 let print = function
-  | ValPrim (ConstString x) -> ValPrim (ConstUnit (Format.printf "%s\n%!" x))
-  | x -> ValPrim (ConstUnit (Format.printf "%a\n%!" PP.pp_value x))
+  | VPrim (ConstString x) -> VPrim (ConstUnit (Format.printf "%s\n%!" x))
+  | x -> VPrim (ConstUnit (Format.printf "%a\n%!" PP.pp_value x))
 ;;
 
 let add x y =
   match x, y with
-  | ValPrim (ConstInt x), ValPrim (ConstInt y) -> ValPrim (ConstInt (x + y))
+  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x + y))
   | _ -> assert false
 ;;
 
 let sub x y =
   match x, y with
-  | ValPrim (ConstInt x), ValPrim (ConstInt y) -> ValPrim (ConstInt (x - y))
+  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x - y))
   | _ -> assert false
 ;;
 
 let mul x y =
   match x, y with
-  | ValPrim (ConstInt x), ValPrim (ConstInt y) -> ValPrim (ConstInt (x * y))
+  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x * y))
   | _ -> assert false
 ;;
 
 let div x y =
   match x, y with
-  | ValPrim (ConstInt x), ValPrim (ConstInt y) -> ValPrim (ConstInt (x / y))
+  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x / y))
   | _ -> assert false
 ;;
 
 let builtin =
-  let unary f = ValNative f
-  and binary f = ValNative (fun x -> ValNative (f x)) in
+  let unary f = VExternal f
+  and binary f = VExternal (fun x -> VExternal (f x)) in
   function
   | "panic" -> Some (unary panic)
   | "print" -> Some (unary print)
@@ -49,8 +50,9 @@ let builtin =
 
 let run parse lexbuf =
   let aux expr =
-    let value, typ = Eval.eval (Eval.env builtin) expr in
-    Format.printf "%a :: %a\n%!" PP.pp_value value (PP.pp_typ []) typ
+    let typ = Typecheck.infer Typecheck.Env.empty expr
+    and value = Eval.eval (Eval.Env.init builtin) expr in
+    Format.printf "%a :: %a\n%!" PP.pp_value value PP.pp_typ typ
   in
   try parse Lexer.token lexbuf |> List.iter aux with
   | Error.Error e -> Format.eprintf "Error: %s\n%!" e
@@ -61,7 +63,7 @@ let run parse lexbuf =
 
 let rec repl () =
   Format.printf "FOmega> %!";
-  let parse lexfun lexbuf = [ Parser.topexpr lexfun lexbuf ]
+  let parse lexfun lexbuf = [ Parser.repl lexfun lexbuf ]
   and lexbuf = Lexing.from_string (read_line ()) in
   run parse lexbuf;
   repl ()

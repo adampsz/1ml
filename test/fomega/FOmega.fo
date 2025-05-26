@@ -1,6 +1,6 @@
-let print: forall a. a -> unit = external print [forall a. a -> unit] in
-let add: int -> int -> int = external add [int -> int -> int] in
-let sub: int -> int -> int = external sub [int -> int -> int] in
+let print: forall a. a -> unit = (external print: forall a. a -> unit) in
+let add: int -> int -> int = (external add: int -> int -> int) in
+let sub: int -> int -> int = (external sub: int -> int -> int) in
 
 let _: unit = print [string] "\n0. Hello\n" in
 
@@ -12,15 +12,15 @@ let _: unit = print [int] (add 5 (sub 6 2)) in
   Pairs (Record encoding)
 \*************************/
 
-let print: forall a. a -> unit = external print [forall a. a -> unit] in
+let print: forall a. a -> unit = (external print: forall a. a -> unit) in
 
 let _: unit = print [string] "\n1. Pairs (Record encoding)\n" in
 
-unpack pair, pair = pack {
+unpack pair: * -> * -> *, pair = pack lambda l, r. { l: l, r: r }, {
   cons = lambda [l], [r], l: l, r: r. { l = l, r = r },
   fst =  lambda [l], [r], p: { l: l, r: r }. p.l,
   snd =  lambda [l], [r], p: { l: l, r: r }. p.r,
-} as exists pair: * -> * -> * = lambda l, r. { l: l, r: r }. {
+} as exists pair: * -> * -> *. {
   cons: forall l, r. l -> r -> pair l r,
   fst:  forall l, r. pair l r -> l,
   snd:  forall l, r. pair l r -> r,
@@ -37,15 +37,15 @@ let _: unit = print [bool] (pair.snd [int] [bool] p) in
   Pairs (Church encoding)
 \*************************/
 
-let print: forall a. a -> unit = external print [forall a. a -> unit] in
+let print: forall a. a -> unit = (external print: forall a. a -> unit) in
 
 let _: unit = print [string] "\n2. Pairs (Church encoding)\n" in
 
-unpack pair, pair = pack {
+unpack pair: * -> * -> *, pair = pack lambda l, r. forall z. (l -> r -> z) -> z, {
   cons = lambda [l], [r], l: l, r: r, [z], z: l -> r -> z. z l r,
   fst =  lambda [l], [r], p: (forall z. (l -> r -> z) -> z). p [l] (lambda l: l, r: r. l),
   snd =  lambda [l], [r], p: (forall z. (l -> r -> z) -> z). p [r] (lambda l: l, r: r. r),
-} as exists pair: * -> * -> * = lambda l, r. forall z. (l -> r -> z) -> z. {
+} as exists pair: * -> * -> *. {
   cons: forall l, r. l -> r -> pair l r,
   fst:  forall l, r. pair l r -> l,
   snd:  forall l, r. pair l r -> r,
@@ -64,14 +64,14 @@ let _: unit = print [bool] (pair.snd [int] [bool] p) in
   Lists (right fold encoding)
 \*****************************/
 
-let panic: forall a. string -> a = external panic [forall a. string -> a] in
-let print: forall a. a -> unit = external print [forall a. a -> unit] in
-let add: int -> int -> int = external add [int -> int -> int] in
-let sub: int -> int -> int = external sub [int -> int -> int] in
+let panic: forall a. string -> a = (external panic: forall a. string -> a) in
+let print: forall a. a -> unit = (external print: forall a. a -> unit) in
+let add: int -> int -> int = (external add: int -> int -> int) in
+let sub: int -> int -> int = (external sub: int -> int -> int) in
 
 let _: unit = print [string] "\n3. Lists (right fold encoding)\n" in
 
-unpack list, list = pack {
+unpack list: * -> *, list = pack lambda a. forall r. (a -> r -> r) -> r -> r, {
   nil   = lambda [a], [r], c: a -> r -> r, n: r. n,
   cons  = lambda [a], h: a, t: (forall r. (a -> r -> r) -> r -> r), [r], c: a -> r -> r, n: r. c h (t [r] c n),
   isnil = lambda [a], l: (forall r. (a -> r -> r) -> r -> r). l [bool] (lambda h: a, r: bool. false) true,
@@ -79,7 +79,7 @@ unpack list, list = pack {
   tail  = lambda [a], l: (forall r. (a -> r -> r) -> r -> r), [r], c: a -> r -> r, n: r. l [(a -> r -> r) -> r] (lambda h: a, r: (a -> r -> r) -> r, g: a -> r -> r. g h (r c)) (lambda c: (a -> r -> r). n) (lambda h: a, t: r. t),
   foldr = lambda [a], [r], c: a -> r -> r, n: r, l: (forall r. (a -> r -> r) -> r -> r). l [r] c n,
   map   = lambda [a], [b], f: a -> b, l: (forall r. (a -> r -> r) -> r -> r), [r], c: b -> r -> r, n: r. l [r] (lambda h: a, r: r. c (f h) r) n,
-} as exists list: * -> * = lambda a. forall r. (a -> r -> r) -> r -> r. {
+} as exists list: * -> *. {
   nil:   forall a. list a,
   cons:  forall a. a -> list a -> list a,
   isnil: forall a. list a -> bool,
@@ -121,13 +121,13 @@ let _: unit = list.foldr [list int] [unit] (lambda xs: list int, _: unit. print 
   Church numerals
 \******************/
 
-let print: forall a. a -> unit = external print [forall a. a -> unit] in
-let add: int -> int -> int = external add [int -> int -> int] in
-let mul: int -> int -> int = external mul [int -> int -> int] in
+let print: forall a. a -> unit = (external print: forall a. a -> unit) in
+let add: int -> int -> int = (external add: int -> int -> int) in
+let mul: int -> int -> int = (external mul: int -> int -> int) in
 
 let _: unit = print [string] "\n4. Church numerals\n" in
 
-unpack num, num = pack (
+unpack num, num = pack forall a. (a -> a) -> a -> a, (
   let p: (forall a. (a -> a) -> a -> a) -> (forall a. (a -> a) -> a -> a)
        = lambda n: (forall a. (a -> a) -> a -> a), [a], s: a -> a, z: a.
          n [(a -> a) -> a] (lambda g: (a -> a) -> a, h: a -> a. h (g s)) (lambda u: (a -> a). z) (lambda u: a. u) in
@@ -141,7 +141,7 @@ unpack num, num = pack (
     mul = lambda n: (forall a. (a -> a) -> a -> a), m: (forall a. (a -> a) -> a -> a), [a], s: a -> a, z: a. n [a] (m [a] s) z,
     pow = lambda n: (forall a. (a -> a) -> a -> a), m: (forall a. (a -> a) -> a -> a), [a]. m [a -> a] (n [a]),
   }
-) as exists num: * = forall a. (a -> a) -> a -> a. {
+) as exists num. {
   z: num,
   s: num -> num,
   p: num -> num,

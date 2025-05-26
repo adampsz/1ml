@@ -1,65 +1,275 @@
-(** Record label *)
-type label = string
+open Util
 
-(** De Bruijn index *)
-type index = int
+module Kind = struct
+  include struct
+    type ktyp = private unit
+  end
 
-(** κ *)
-type kind =
-  | KStar (** ∗ *)
-  | KArrow of kind * kind (** κ → κ *)
+  type _ t =
+    | KType : ktyp t
+    | KArrow : 'a t * 'b t -> ('a -> 'b) t
 
-(** b *)
-type prim = Prim.t =
-  | PrimUnit
-  | PrimBool
-  | PrimInt
-  | PrimString
+  let rec hequal : type k1 k2. k1 t -> k2 t -> (k1, k2) Type.eq option =
+    fun k1 k2 ->
+    match k1, k2 with
+    | KType, KType -> Some Util.Equal
+    | KArrow (k1a, k1b), KArrow (k2a, k2b) ->
+      (match hequal k1a k2a, hequal k1b k2b with
+       | Some Util.Equal, Some Util.Equal -> Some Util.Equal
+       | _, _ -> None)
+    | _, _ -> None
+  ;;
 
-(** τ *)
-type typ =
-  | TyVar of index (** α *)
-  | TyPrim of prim (** b *)
-  | TyArrow of typ * typ (** τ → τ *)
-  | TyRecord of (label * typ) list (** { l: τ, …, l: τ } *)
-  | TyForall of string * kind * typ (** ∀κ. τ *)
-  | TyExists of string * kind * typ (** ∃κ. τ *)
-  | TyLam of string * kind * typ (** λα:κ. τ *)
-  | TyApp of typ * typ (** τ τ *)
+  let equal (x : 'k t) (y : 'k t) : bool = x = y
+end
 
-type const = Prim.const =
-  | ConstUnit of unit
-  | ConstBool of bool
-  | ConstInt of int
-  | ConstString of string
+module Type = struct
+  module TVar : sig
+    type 'k t
 
-(** e *)
-type term =
-  | TmVar of index (** x *)
-  | TmPrim of const (** c_b *)
-  | TmLam of string * typ * term (** λx:τ. e *)
-  | TmExternal of string
-  | TmApp of term * term (** e e *)
-  | TmRecord of (label * term) list (** { l: e, …, l: e } *)
-  | TmProj of term * label (** e.l *)
-  | TmTyLam of string * kind * term (** λα:κ. e *)
-  | TmTyApp of term * typ (** e τ *)
-  | TmPack of typ * term * string * kind * typ (** pack ⟨τ, e⟩ as ∃α:κ. τ *)
-  | TmUnpack of string * string * term * term (** unpack ⟨α, x⟩ = e in e *)
+    val id : 'k t -> int
+    val kind : 'k t -> 'k Kind.t
+    val name : 'k t -> string option
+    val fresh : ?name:string -> 'k Kind.t -> 'k t
+    val clone : 'k t -> 'k t
+    val equal : 'k t -> 'k t -> bool
+    val compare : 'k t -> 'k t -> int
+    val hequal : 'k1 t -> 'k2 t -> ('k1, 'k2) Util.eq option
+    val hcompare : 'k1 t -> 'k2 t -> int
 
-type value =
-  | ValPrim of const
-  | ValLam of value list * term
-  | ValNative of (value -> value)
-  | ValRecord of (label * value) list
-  | ValTyLam of value list * term
-  | ValPack of value
+    module Map : Util.HMap.S with type 'k key = 'k t
+  end = struct
+    let counter = ref 0
+
+    type 'k t = int * 'k Kind.t * string option
+
+    let id (x, _, _) = x
+    let kind (_, k, _) = k
+    let name (_, _, n) = n
+    let fresh ?name k = next counter, k, name
+    let clone (_, k, n) = fresh ?name:n k
+    let hequal (x1, k1, _) (x2, k2, _) = if x1 = x2 then Kind.hequal k1 k2 else None
+    let hcompare (x1, _, _) (x2, _, _) = Int.compare x1 x2
+    let equal x1 x2 = hequal x1 x2 <> None
+    let compare = hcompare
+
+    module Map = Util.HMap.Make (struct
+        type nonrec 'k t = 'k t
+
+        let hcompare = hcompare
+      end)
+  end
+
+  type ktyp = Kind.ktyp
+  type 'k tvar = 'k TVar.t
+
+  (** τ *)
+  type _ t =
+    | TVar : 'k tvar -> 'k t (** α *)
+    | TPrim : Prim.t -> ktyp t (** b *)
+    | TArrow : ktyp t * ktyp t -> ktyp t (** τ → τ *)
+    | TRecord : (string * ktyp t) list -> ktyp t (** { l: τ, …, l: τ } *)
+    | TForall : 'k tvar * ktyp t -> ktyp t (** ∀κ. τ *)
+    | TExists : 'k tvar * ktyp t -> ktyp t (** ∃κ. τ *)
+    | TLam : 'k1 TVar.t * 'k2 t -> ('k1 -> 'k2) t (** λα:κ. τ *)
+    | TApp : ('k1 -> 'k2) t * 'k1 t -> 'k2 t (** τ τ *)
+
+  type ttyp = ktyp t
+
+  let rec kind : type k. k t -> k Kind.t = function
+    | TVar x -> TVar.kind x
+    | TPrim _ -> KType
+    | TArrow _ -> KType
+    | TRecord _ -> KType
+    | TForall _ -> KType
+    | TExists _ -> KType
+    | TLam (t1, t2) -> Kind.KArrow (TVar.kind t1, kind t2)
+    | TApp (t1, _) ->
+      let (Kind.KArrow (_, k2)) = kind t1 in
+      k2
+  ;;
+
+  module Subst = struct
+    module Sub = TVar.Map.Make (struct
+        type nonrec 'k t = 'k t
+      end)
+
+    let add_var x sub =
+      let y = TVar.clone x in
+      y, Sub.add x (TVar y) sub
+    ;;
+
+    let rec subst : type k. Sub.t -> k t -> k t =
+      fun sub -> function
+      | TVar x ->
+        (match Sub.find_opt x sub with
+         | Some t -> t
+         | None -> TVar x)
+      | TPrim b -> TPrim b
+      | TArrow (t1, t2) -> TArrow (subst sub t1, subst sub t2)
+      | TRecord ts -> TRecord (List.map (fun (l, t) -> l, subst sub t) ts)
+      | TForall (x, t) ->
+        let x, sub = add_var x sub in
+        TForall (x, subst sub t)
+      | TExists (x, t) ->
+        let x, sub = add_var x sub in
+        TExists (x, subst sub t)
+      | TLam (x, t) ->
+        let x, sub = add_var x sub in
+        TLam (x, subst sub t)
+      | TApp (t1, t2) -> TApp (subst sub t1, subst sub t2)
+    ;;
+
+    let subst_one x st t = subst (Sub.singleton x st) t
+    let subst_tvar x y t = subst_one x (TVar y) t
+  end
+
+  module Normal = struct
+    type 'k typ = 'k t
+
+    type _ neutral =
+      | NVar : 'k TVar.t -> 'k neutral
+      | NApp : 'k1 typ * ('k1 -> 'k2) neutral -> 'k2 neutral
+
+    type _ t =
+      | NNeutral : 'k neutral -> 'k t
+      | NLam : 'k1 TVar.t * 'k2 typ -> ('k1 -> 'k2) t
+      | NPrim : Prim.t -> ktyp t
+      | NArrow : ttyp * ttyp -> ktyp t
+      | NRecord : (string * ttyp) list -> ktyp t
+      | NForall : 'k tvar * ttyp -> ktyp t
+      | NExists : 'k tvar * ttyp -> ktyp t
+
+    let rec normalize : type k. k typ -> k t = function
+      | TVar x -> NNeutral (NVar x)
+      | TPrim p -> NPrim p
+      | TArrow (t1, t2) -> NArrow (t1, t2)
+      | TRecord ts -> NRecord ts
+      | TForall (x, t) -> NForall (x, t)
+      | TExists (x, t) -> NExists (x, t)
+      | TLam (t1, t2) -> NLam (t1, t2)
+      | TApp (t1, t2) ->
+        (match normalize t1 with
+         | NNeutral n -> NNeutral (NApp (t2, n))
+         | NLam (x, t) -> Subst.subst_one x t2 t |> normalize)
+    ;;
+  end
+
+  module Equiv = struct
+    type 'k normal = 'k Normal.t
+    type 'k neutral = 'k Normal.neutral
+
+    let equiv t1 t2 =
+      let rec aux : type k. k t -> k t -> bool =
+        fun t1 t2 ->
+        match Normal.normalize t1, Normal.normalize t2 with
+        | NNeutral n1, NNeutral n2 -> auxn n1 n2 <> None
+        | NNeutral _, _ -> false
+        | NLam (x1, t1), NLam (x2, t2) -> aux t1 (Subst.subst_tvar x2 x1 t2)
+        | NLam _, _ -> false
+        | NPrim p1, NPrim p2 -> p1 = p2
+        | NPrim _, _ -> false
+        | NArrow (ta1, tv1), NArrow (ta2, tv2) -> aux ta1 ta2 && aux tv1 tv2
+        | NArrow _, _ -> false
+        | NRecord ts1, NRecord ts2 ->
+          let eq (l1, t1) (l2, t2) = l1 = l2 && aux t1 t2 in
+          List.equal eq ts1 ts2
+        | NRecord _, _ -> false
+        | NForall (x1, t1), NForall (x2, t2) ->
+          (match Kind.hequal (TVar.kind x1) (TVar.kind x2) with
+           | Some Util.Equal -> aux t1 (Subst.subst_tvar x2 x1 t2)
+           | None -> false)
+        | NForall _, _ -> false
+        | NExists (x1, t1), NExists (x2, t2) ->
+          (match Kind.hequal (TVar.kind x1) (TVar.kind x2) with
+           | Some Util.Equal -> aux t1 (Subst.subst_tvar x2 x1 t2)
+           | None -> false)
+        | NExists _, _ -> false
+      and auxn : type k1 k2. k1 neutral -> k2 neutral -> (k1, k2) Util.eq option =
+        fun n1 n2 ->
+        match n1, n2 with
+        | NVar x1, NVar x2 -> TVar.hequal x1 x2
+        | NVar _, _ -> None
+        | NApp (t1, n1), NApp (t2, n2) ->
+          (match auxn n1 n2 with
+           | Some Util.Equal -> if aux t1 t2 then Some Util.Equal else None
+           | None -> None)
+        | NApp _, _ -> None
+      in
+      aux t1 t2
+    ;;
+  end
+end
+
+module Expr = struct
+  module Var : sig
+    type t
+
+    val fresh : ?name:string -> unit -> t
+    val id : t -> int
+    val clone : t -> t
+    val name : t -> string option
+    val equal : t -> t -> bool
+    val compare : t -> t -> int
+
+    module Map : Map.S with type key = t
+  end = struct
+    type t = int * string option
+
+    let counter = ref 0
+    let fresh ?name () = next counter, name
+    let id (x, _) = x
+    let clone (_, n) = fresh ?name:n ()
+    let name (_, n) = n
+    let equal (x1, _) (x2, _) = Int.equal x1 x2
+    let compare (x1, _) (x2, _) = Int.compare x1 x2
+
+    module Map = Map.Make (struct
+        type nonrec t = t
+
+        let compare = compare
+      end)
+  end
+
+  type var = Var.t
+  type 'k typ = 'k Type.t
+  type 'k tvar = 'k Type.TVar.t
+  type ttyp = Type.ktyp typ
+
+  (** e *)
+  type t =
+    | EVar of Var.t (** x *)
+    | EPrim of Prim.const (** c_b *)
+    | ELam of var * ttyp * t (** λx:τ. e *)
+    | EApp of t * t (** e e *)
+    | ERecord of (string * t) list (** { l: e, …, l: e } *)
+    | EProj of t * string (** e.l *)
+    | ETyLam : 'k tvar * t -> t (** λα:κ. e *)
+    | ETyApp : t * 'k typ -> t (** e τ *)
+    | EPack : 'k typ * t * ttyp -> t (** pack ⟨τ, e⟩ as τ *)
+    | EUnpack : 'k tvar * var * t * t -> t (** unpack ⟨α, x⟩ = e in e *)
+    (* Extensions *)
+    | EExternal of string * ttyp
+    | ECond of t * t * t
+end
+
+module Value = struct
+  (** v *)
+  type t =
+    | VPrim of Prim.const
+    | VLam of (t -> t)
+    | VExternal of (t -> t)
+    | VRecord of (string * t) list
+    | VTyLam of (unit -> t)
+    | VPack of t
+end
 
 module PP = struct
   open Format
-
-  let rec add_name x xs = if List.mem x xs then add_name (x ^ "'") xs else x, x :: xs
-  let find_name i xs = List.nth xs i
+  open Kind
+  open Type
+  open Expr
+  open Value
 
   let pp_wrap ppf w fmt =
     match w with
@@ -67,360 +277,308 @@ module PP = struct
     | true -> kfprintf (fun f -> kfprintf (dprintf ")") f fmt) ppf "("
   ;;
 
-  let pp_kind =
-    let rec aux w fmt = function
-      | KStar -> fprintf fmt "∗"
-      | KArrow (k1, k2) -> pp_wrap fmt w "%a →  %a" (aux true) k1 (aux false) k2
+  let pp_kind ppf =
+    let rec aux : type k. _ -> _ -> k Kind.t -> _ =
+      fun w ppf -> function
+        | KType -> fprintf ppf "∗"
+        | KArrow (k1, k2) -> pp_wrap ppf w "%a →  %a" (aux true) k1 (aux false) k2
     in
-    aux false
+    aux false ppf
   ;;
 
-  let pp_typ typs =
-    let rec aux p typs fmt = function
-      | TyVar i -> pp_print_string fmt (find_name i typs)
-      | TyPrim PrimUnit -> pp_print_string fmt "unit"
-      | TyPrim PrimBool -> pp_print_string fmt "bool"
-      | TyPrim PrimInt -> pp_print_string fmt "int"
-      | TyPrim PrimString -> pp_print_string fmt "string"
-      | TyRecord ts ->
-        let pp_field fmt (l, t) = fprintf fmt "%s: %a" l (aux 0 typs) t
+  let pp_tvar (type k) ppf (x : k TVar.t) =
+    match TVar.name x with
+    | Some n -> pp_print_string ppf n
+    | None -> fprintf ppf "%%%d" (TVar.id x)
+  ;;
+
+  let pp_tvar_param (type k) ppf (x : k TVar.t) =
+    match Kind.hequal (TVar.kind x) KType with
+    | Some Util.Equal -> pp_tvar ppf x
+    | None -> fprintf ppf "%a: %a" pp_tvar x pp_kind (TVar.kind x)
+  ;;
+
+  let pp_typ ppf =
+    let rec aux : type k. _ -> _ -> k Type.t -> _ =
+      fun prec ppf -> function
+        | TVar x -> pp_tvar ppf x
+        | TPrim PrimUnit -> pp_print_string ppf "unit"
+        | TPrim PrimBool -> pp_print_string ppf "bool"
+        | TPrim PrimInt -> pp_print_string ppf "int"
+        | TPrim PrimFloat -> pp_print_string ppf "float"
+        | TPrim PrimString -> pp_print_string ppf "string"
+        | TRecord ts ->
+          let pp_field fmt (l, t) = fprintf fmt "%s: %a" l (aux 0) t
+          and pp_sep fmt _ = pp_print_string fmt ", " in
+          fprintf ppf "{ %a }" (pp_print_list ~pp_sep pp_field) ts
+        | TApp (t1, t2) -> pp_wrap ppf (prec > 1) "%a %a" (aux 1) t1 (aux 2) t2
+        | TArrow (t1, t2) -> pp_wrap ppf (prec > 0) "%a →  %a" (aux 1) t1 (aux 0) t2
+        | TForall (a, t) -> pp_wrap ppf (prec > 0) "∀ %a. %a" pp_tvar_param a (aux 0) t
+        | TExists (a, t) -> pp_wrap ppf (prec > 0) "∃ %a. %a" pp_tvar_param a (aux 0) t
+        | TLam (a, t) -> pp_wrap ppf (prec > 0) "λ %a. %a" pp_tvar_param a (aux 0) t
+    in
+    aux 0 ppf
+  ;;
+
+  let pp_var ppf x =
+    match Var.name x with
+    | Some n -> pp_print_string ppf n
+    | None -> fprintf ppf "%%%d" (Var.id x)
+  ;;
+
+  let pp_expr ppf =
+    let rec aux prec ppf = function
+      | EVar x -> pp_var ppf x
+      | EPrim (ConstUnit _) -> pp_print_string ppf "()"
+      | EPrim (ConstBool x) -> pp_print_bool ppf x
+      | EPrim (ConstInt x) -> pp_print_int ppf x
+      | EPrim (ConstFloat x) -> pp_print_float ppf x
+      | EPrim (ConstString x) -> fprintf ppf "%S" x
+      | ELam (x, t, e) ->
+        pp_wrap ppf (prec > 0) "λ %a: %a. %a" pp_var x pp_typ t (aux 0) e
+      | EApp (e1, e2) -> pp_wrap ppf (prec > 1) "%a %a" (aux 1) e1 (aux 2) e2
+      | ERecord es ->
+        let pp_field fmt (l, t) = fprintf fmt "%s = %a" l (aux 0) t
         and pp_sep fmt _ = pp_print_string fmt ", " in
-        pp_print_string fmt "{ ";
-        pp_print_list ~pp_sep pp_field fmt ts;
-        pp_print_string fmt " }"
-      | TyApp (t1, t2) -> pp_wrap fmt (p > 1) "%a %a" (aux 1 typs) t1 (aux 2 typs) t2
-      | TyArrow (t1, t2) -> pp_wrap fmt (p > 0) "%a →  %a" (aux 1 typs) t1 (aux 0 typs) t2
-      | TyForall (b, k, t) ->
-        let b, typs = add_name b typs in
-        pp_wrap fmt (p > 0) "∀ %s: %a. %a" b pp_kind k (aux 0 typs) t
-      | TyExists (b, k, t) ->
-        let b, typs = add_name b typs in
-        pp_wrap fmt (p > 0) "∃ %s: %a. %a" b pp_kind k (aux 0 typs) t
-      | TyLam (b, k, t) ->
-        let b, typs = add_name b typs in
-        pp_wrap fmt (p > 0) "λ %s: %a. %a" b pp_kind k (aux 0 typs) t
+        fprintf ppf "{ %a }" (pp_print_list ~pp_sep pp_field) es
+      | EProj (e, l) -> fprintf ppf "%a.%s" (aux 2) e l
+      | ETyLam (a, e) -> pp_wrap ppf (prec > 0) "λ %a. %a" pp_tvar_param a (aux 0) e
+      | ETyApp (e, t) -> pp_wrap ppf (prec > 1) "%a [%a]" (aux 1) e pp_typ t
+      | EPack (t, e, s) ->
+        pp_wrap ppf (prec > 0) "pack ⟨%a, %a⟩ as %a" pp_typ t (aux 0) e pp_typ s
+      | EUnpack (a, x, e1, e2) ->
+        let pp = pp_wrap ppf (prec > 0) "unpack ⟨%a, %a⟩ = %a in %a" in
+        pp pp_tvar_param a pp_var x (aux 0) e1 (aux 0) e2
+      | EExternal (n, t) -> fprintf ppf "external %s: %a" n pp_typ t
+      | ECond (c, e1, e2) ->
+        pp_wrap ppf (prec > 0) "if %a then %a else %a" (aux 0) c (aux 0) e1 (aux 0) e2
     in
-    aux 0 typs
+    aux 0 ppf
   ;;
 
-  let pp_expr vars typs =
-    let rec aux p vars typs fmt = function
-      | TmVar i -> pp_print_string fmt (find_name i vars)
-      | TmPrim (ConstUnit _) -> fprintf fmt "()"
-      | TmPrim (ConstBool x) -> fprintf fmt "%b" x
-      | TmPrim (ConstInt x) -> fprintf fmt "%d" x
-      | TmPrim (ConstString x) -> fprintf fmt "%S" x
-      | TmLam (b, t, e) ->
-        let b, vars = add_name b vars in
-        pp_wrap fmt (p > 0) "λ %s: %a. %a" b (pp_typ typs) t (aux 0 vars typs) e
-      | TmExternal n -> fprintf fmt "external %s" n
-      | TmApp (e1, e2) ->
-        pp_wrap fmt (p > 1) "%a %a" (aux 1 vars typs) e1 (aux 2 vars typs) e2
-      | TmRecord es ->
-        let pp_field fmt (l, t) = fprintf fmt "%s = %a" l (aux 0 vars typs) t
-        and pp_sep fmt _ = pp_print_string fmt ", " in
-        pp_print_string fmt "{ ";
-        pp_print_list ~pp_sep pp_field fmt es;
-        pp_print_string fmt " }"
-      | TmProj (e, l) -> fprintf fmt "%a.%s" (aux 2 vars typs) e l
-      | TmTyLam (b, k, e) ->
-        let b, typs = add_name b typs in
-        pp_wrap fmt (p > 0) "λ %s: %a. %a" b pp_kind k (aux 0 vars typs) e
-      | TmTyApp (e, t) ->
-        pp_wrap fmt (p > 1) "%a [%a]" (aux 1 vars typs) e (pp_typ typs) t
-      | TmPack (t1, e, b, k, t2) ->
-        let pp_typ fmt =
-          let b, typs = add_name b typs in
-          fprintf fmt "∃ %s: %a. %a" b pp_kind k (pp_typ typs) t2
-        and pp_t = pp_typ typs in
-        pp_wrap fmt (p > 0) "pack ⟨%a, %a⟩ as %t" pp_t t1 (aux 0 vars typs) e pp_typ
-      | TmUnpack (b1, b2, e1, e2) ->
-        let b1, vars = add_name b1 vars
-        and b2, typs = add_name b2 typs in
-        let aux p = aux p vars typs in
-        pp_wrap fmt (p > 0) "unpack %s, %s = %a in %a" b1 b2 (aux 0) e1 (aux 0) e2
-    in
-    aux 0 vars typs
-  ;;
-
-  let rec pp_value fmt = function
-    | ValPrim (ConstUnit _) -> fprintf fmt "()"
-    | ValPrim (ConstBool x) -> fprintf fmt "%b" x
-    | ValPrim (ConstInt x) -> fprintf fmt "%d" x
-    | ValPrim (ConstString x) -> fprintf fmt "%S" x
-    | ValLam _ | ValTyLam _ | ValNative _ -> pp_print_string fmt "<fun>"
-    | ValRecord vs ->
+  let rec pp_value ppf = function
+    | VPrim (ConstUnit _) -> fprintf ppf "()"
+    | VPrim (ConstBool x) -> fprintf ppf "%b" x
+    | VPrim (ConstInt x) -> fprintf ppf "%d" x
+    | VPrim (ConstFloat x) -> fprintf ppf "%f" x
+    | VPrim (ConstString x) -> fprintf ppf "%S" x
+    | VLam _ | VTyLam _ | VExternal _ -> pp_print_string ppf "<fun>"
+    | VRecord vs ->
       let pp_field fmt (l, v) = fprintf fmt "%s: %a" l pp_value v
       and pp_sep fmt _ = pp_print_string fmt ", " in
-      pp_print_string fmt "{ ";
-      pp_print_list ~pp_sep pp_field fmt vs;
-      pp_print_string fmt " }"
-    | ValPack v -> fprintf fmt "pack %a" pp_value v
+      fprintf ppf "pp { %a }" (pp_print_list ~pp_sep pp_field) vs
+    | VPack v -> fprintf ppf "pack %a" pp_value v
   ;;
 end
 
 module Error = struct
   exception Error of string
 
-  let err fmt = Format.kasprintf (fun s -> Error s |> raise) fmt
-  let kind_mismatch k1 k2 = err "kind mismatch: %a vs %a" PP.pp_kind k1 PP.pp_kind k2
-  let expected_type_kind k = err "expected type kind, found %a" PP.pp_kind k
-  let expected_function_kind k = err "expected function kind, found %a" PP.pp_kind k
+  let err fmt = Format.kasprintf (fun msg -> raise (Error msg)) fmt
+  let undefined_external_symbol id = err "undefined external symbol `%s'" id
+  let undefined_variable x = err "undefined variable `%a'" PP.pp_var x
 
-  let type_mismatch ctx t1 t2 =
-    err "type mismatch: %a vs %a" (PP.pp_typ ctx) t1 (PP.pp_typ ctx) t2
+  let expected_matching_kind k1 k2 =
+    err "expected kind %a, but got %a" PP.pp_kind k1 PP.pp_kind k2
   ;;
 
-  let undefined_external n = err "undefined external symbol `%s'" n
-  let undefined_variable n = err "undefined variable `%s'" n
-  let undefined_field n = err "undefined record field `%s'" n
-
-  let expected_function_type ctx t =
-    err "expected function type, found %a" (PP.pp_typ ctx) t
+  let expected_matching_type t1 t2 =
+    err "expected %a, but got %a" PP.pp_typ t1 PP.pp_typ t2
   ;;
 
-  let expected_record_type ctx t = err "expected record type, found %a" (PP.pp_typ ctx) t
+  let expected_type what t = err "expected %s, but got %a" what PP.pp_typ t
+  let expected_function_type = expected_type "a function type"
+  let expected_record_type = expected_type "a record type"
+  let expected_existential_type = expected_type "an existential type"
+  let expected_universal_type = expected_type "a universal type"
+  let expected_bool = expected_type "a boolean"
 
-  let expected_universal_type ctx t =
-    err "expected universal type, found %a" (PP.pp_typ ctx) t
-  ;;
-
-  let expected_existential_type ctx t =
-    err "expected existential type, found %a" (PP.pp_typ ctx) t
-  ;;
-
-  let variable_escapes_scope ctx b t =
-    err "variable %s escapes scope: %a" b (PP.pp_typ ctx) t
-  ;;
-
-  let _ =
-    Printexc.register_printer (function
-      | Error err -> Some err
-      | _ -> None)
+  let undefined_record_field ts l =
+    err "undefined field `%s' in record %a" l PP.pp_typ (Type.TRecord ts)
   ;;
 end
 
-module Type = struct
-  type binding =
-    | BVar of string * typ
-    | BTyp of string * kind
+module Typecheck = struct
+  open Type
+  open Expr
 
-  type env = binding list
+  module Env : sig
+    type t
 
-  let add_typ b k env = BTyp (b, k) :: env
+    val empty : t
+    val add_var : var -> ttyp -> t -> t
+    val add_typ : 'k tvar -> t -> 'k tvar * t
+    val find_var : Var.t -> t -> ttyp option
+    val find_typ : 'k tvar -> t -> 'k tvar option
+  end = struct
+    module Subst = TVar.Map.Make (struct
+        type 'k t = 'k TVar.t
+      end)
 
-  let rec find_typ x = function
-    | BTyp (_, k) :: _ when x = 0 -> k
-    | BTyp _ :: env -> find_typ (x - 1) env
-    | BVar _ :: env -> find_typ x env
-    | [] -> assert false
+    type t =
+      { subst : Subst.t
+      ; vars : ttyp Var.Map.t
+      }
+
+    let empty = { subst = Subst.empty; vars = Var.Map.empty }
+    let add_var x t env = { env with vars = Var.Map.add x t env.vars }
+
+    let add_typ x env =
+      let y = Type.TVar.clone x in
+      y, { env with subst = Subst.add x y env.subst }
+    ;;
+
+    let find_var x env = Var.Map.find_opt x env.vars
+    let find_typ x env = Subst.find_opt x env.subst
+  end
+
+  let rec freshen : type k. _ -> k typ -> k typ =
+    fun env -> function
+    | TVar x ->
+      (match Env.find_typ x env with
+       | Some x -> TVar x
+       | None -> assert false)
+    | TPrim p -> TPrim p
+    | TRecord ts -> TRecord (List.map (fun (l, t) -> l, freshen env t) ts)
+    | TApp (t1, t2) -> TApp (freshen env t1, freshen env t2)
+    | TArrow (t1, t2) -> TArrow (freshen env t1, freshen env t2)
+    | TForall (a, t) ->
+      let a, env = Env.add_typ a env in
+      TForall (a, freshen env t)
+    | TExists (a, t) ->
+      let a, env = Env.add_typ a env in
+      TExists (a, freshen env t)
+    | TLam (a, t) ->
+      let a, env = Env.add_typ a env in
+      TLam (a, freshen env t)
   ;;
 
-  let rec get_typs = function
-    | BTyp (b, _) :: xs -> b :: get_typs xs
-    | BVar _ :: xs -> get_typs xs
-    | [] -> []
-  ;;
-
-  (** [shift n t] shifts all free variables in [t] by [n] *)
-  let shift n =
-    (* [aux f t] shifts all variables with index at least [f] by [n] *)
-    let rec aux f = function
-      | TyVar x when x < f -> TyVar x
-      | TyVar x when x + n < 0 -> assert false
-      | TyVar x -> TyVar (x + n)
-      | TyPrim p -> TyPrim p
-      | TyArrow (t1, t2) -> TyArrow (aux f t1, aux f t2)
-      | TyRecord ts -> TyRecord (List.map (fun (l, t) -> l, aux f t) ts)
-      | TyForall (x, k, t) -> TyForall (x, k, aux (f + 1) t)
-      | TyExists (x, k, t) -> TyExists (x, k, aux (f + 1) t)
-      | TyLam (x, k, t) -> TyLam (x, k, aux (f + 1) t)
-      | TyApp (t1, t2) -> TyApp (aux f t1, aux f t2)
-    in
-    aux 0
-  ;;
-
-  (** [subst t' t] substitutes [0] with [t'] in [t],
-      simultaneously shifting all free variables by [-1] *)
-  let subst t' =
-    let rec aux d x = function
-      | TyVar y when y > d -> TyVar (y - 1)
-      | TyVar y when y = d -> shift d t'
-      | TyVar y -> TyVar y
-      | TyPrim p -> TyPrim p
-      | TyArrow (t1, t2) -> TyArrow (aux d x t1, aux d x t2)
-      | TyApp (t1, t2) -> TyApp (aux d x t1, aux d x t2)
-      | TyRecord ts -> TyRecord ((List.map (fun (l, t') -> l, aux d x t')) ts)
-      | TyForall (b, k, t) -> TyForall (b, k, aux (d + 1) (x + 1) t)
-      | TyExists (b, k, t) -> TyExists (b, k, aux (d + 1) (x + 1) t)
-      | TyLam (b, k, t) -> TyLam (b, k, aux (d + 1) (x + 1) t)
-    in
-    aux 0 0
-  ;;
-
-  let rec normalize = function
-    | TyVar x -> TyVar x
-    | TyPrim b -> TyPrim b
-    | TyArrow (t1, t2) -> TyArrow (normalize t1, normalize t2)
-    | TyRecord ts -> TyRecord ((List.map (fun (l, t) -> l, normalize t)) ts)
-    | TyForall (b, k, t) -> TyForall (b, k, normalize t)
-    | TyExists (b, k, t) -> TyExists (b, k, normalize t)
-    | TyLam (b, k, t) -> TyLam (b, k, normalize t)
-    | TyApp (t1, t2) ->
-      (match normalize t1, normalize t2 with
-       | TyLam (_, _, t1), t2 -> subst t2 t1 |> normalize
-       | t1, t2 -> TyApp (t1, t2))
-  ;;
-
-  let subst t' t = subst t' t |> normalize
-
-  let equiv t t' =
-    let rec aux = function
-      | TyPrim t, TyPrim t' -> t = t'
-      | TyVar x, TyVar x' -> x = x'
-      | TyArrow (t1, t2), TyArrow (t1', t2') -> aux (t1, t1') && aux (t2, t2')
-      | TyApp (t1, t2), TyApp (t1', t2') -> aux (t1, t1') && aux (t2, t2')
-      | TyRecord ts, TyRecord ts' ->
-        List.compare_lengths ts ts' = 0
-        && List.for_all2 (fun (l, t) (l', t') -> l = l' && aux (t, t')) ts ts'
-      | TyForall (_, k, t), TyForall (_, k', t') -> k = k' && aux (t, t')
-      | TyExists (_, k, t), TyExists (_, k', t') -> k = k' && aux (t, t')
-      | TyLam (_, k, t), TyLam (_, k', t') -> k = k' && aux (t, t')
-      | _, _ -> false
-    in
-    aux (normalize t, normalize t')
-  ;;
-
-  let rec kindof env = function
-    | TyPrim _ -> KStar
-    | TyVar x -> find_typ x env
-    | TyArrow (t1, t2) ->
-      (match kindof env t1, kindof env t2 with
-       | KStar, KStar -> KStar
-       | KStar, k | k, _ -> Error.expected_type_kind k)
-    | TyApp (t1, t2) ->
-      (match kindof env t1, kindof env t2 with
-       | KArrow (k1', k2), k1 when k1' = k1 -> k2
-       | KArrow (k1', _), k1 -> Error.kind_mismatch k1' k1
-       | k, _ -> Error.expected_function_kind k)
-    | TyRecord ts ->
-      let rec aux = function
-        | [] -> KStar
-        | (_, t) :: ts when kindof env t = KStar -> aux ts
-        | (_, t) :: _ -> Error.expected_type_kind (kindof env t)
-      in
-      aux ts
-    | TyForall (b, k, t) | TyExists (b, k, t) ->
-      (match kindof (add_typ b k env) t with
-       | KStar -> k
-       | k -> Error.expected_type_kind k)
-    | TyLam (b, k, t) -> KArrow (k, kindof (add_typ b k env) t)
-  ;;
-
-  let add_var b t env =
-    assert (kindof env t = KStar);
-    BVar (b, t) :: env
-  ;;
-
-  let find_var x =
-    let rec aux x y = function
-      | [] -> assert false
-      | BVar (_, t) :: _ when x = 0 -> shift y t
-      | BVar _ :: env -> aux (x - 1) y env
-      | BTyp _ :: env -> aux x (y + 1) env
-    in
-    aux x 0
-  ;;
-
-  let rec typeof env = function
-    | TmVar x -> find_var x env
-    | TmPrim (ConstUnit _) -> TyPrim PrimUnit
-    | TmPrim (ConstBool _) -> TyPrim PrimBool
-    | TmPrim (ConstInt _) -> TyPrim PrimInt
-    | TmPrim (ConstString _) -> TyPrim PrimString
-    | TmLam (b, t, e) -> TyArrow (t, typeof (add_var b t env) e)
-    | TmExternal _ -> TyForall ("a", KStar, TyVar 0)
-    | TmApp (e1, e2) ->
-      (match typeof env e1, typeof env e2 with
-       | TyArrow (t1', t2), t1 when equiv t1 t1' -> t2
-       | TyArrow (t1', _), t1 -> Error.type_mismatch (get_typs env) t1' t1
-       | t, _ -> Error.expected_function_type (get_typs env) t)
-    | TmRecord es -> TyRecord (List.map (fun (l, e) -> l, typeof env e) es)
-    | TmProj (e, l) ->
-      (match typeof env e with
-       | TyRecord ts ->
+  let rec infer env = function
+    | EVar x ->
+      (match Env.find_var x env with
+       | Some t -> t
+       | None -> Error.undefined_variable x)
+    | EPrim (ConstUnit _) -> TPrim PrimUnit
+    | EPrim (ConstBool _) -> TPrim PrimBool
+    | EPrim (ConstInt _) -> TPrim PrimInt
+    | EPrim (ConstFloat _) -> TPrim PrimFloat
+    | EPrim (ConstString _) -> TPrim PrimString
+    | ELam (x, t, e) ->
+      let t = freshen env t in
+      let env = Env.add_var x t env in
+      TArrow (t, infer env e)
+    | EApp (e1, e2) ->
+      (match infer env e1, infer env e2 with
+       | TArrow (t1, t2), t1' when Type.Equiv.equiv t1 t1' -> t2
+       | TArrow (t1, _), t1' -> Error.expected_matching_type t1 t1'
+       | t1, _ -> Error.expected_function_type t1)
+    | ERecord es -> TRecord (List.map (fun (l, e) -> l, infer env e) es)
+    | EProj (e, l) ->
+      (match infer env e with
+       | TRecord ts ->
          (match List.assoc_opt l ts with
           | Some t -> t
-          | None -> Error.undefined_field l)
-       | t -> Error.expected_record_type (get_typs env) t)
-    | TmTyLam (b, k, e) -> TyForall (b, k, typeof (add_typ b k env) e)
-    | TmTyApp (e, t) ->
-      (match typeof env e with
-       | TyForall (_, k, t') when kindof env t = k -> subst t t'
-       | TyForall (_, k, _) -> Error.kind_mismatch k (kindof env t)
-       | t -> Error.expected_universal_type (get_typs env) t)
-    | TmPack (t', e, b, k, t) ->
-      (match typeof env e, subst t' t with
-       | t1, t2 when kindof env t' = k && equiv t1 t2 -> TyExists (b, k, t)
-       | t1, t2 -> Error.type_mismatch (get_typs env) t1 t2)
-    | TmUnpack (b1, b2, e1, e2) ->
-      let rec check d = function
-        | TyVar x -> x != d
-        | TyPrim _ -> true
-        | TyRecord ts -> List.for_all (fun (_, t) -> check d t) ts
-        | TyArrow (t1, t2) | TyApp (t1, t2) -> check d t1 && check d t2
-        | TyForall (_, _, t) | TyExists (_, _, t) | TyLam (_, _, t) -> check (d + 1) t
-      in
-      (match typeof env e1 with
-       | TyExists (_, k, t) ->
-         (match typeof (env |> add_typ b1 k |> add_var b2 t) e2 with
-          | t when check 0 t -> shift (-1) t
-          | t -> Error.variable_escapes_scope (get_typs env) b1 t)
-       | t -> Error.expected_existential_type (get_typs env) t)
+          | None -> Error.undefined_record_field ts l)
+       | t -> Error.expected_record_type t)
+    | ETyLam (a, e) ->
+      let a, env = Env.add_typ a env in
+      TForall (a, infer env e)
+    | ETyApp (e, t) ->
+      (match infer env e, freshen env t with
+       | TForall (a, t1), t2 ->
+         (match Kind.hequal (TVar.kind a) (kind t2) with
+          | Some Util.Equal -> Type.Subst.subst_one a t2 t1
+          | None -> Error.expected_matching_kind (TVar.kind a) (kind t2))
+       | t1, _ -> Error.expected_universal_type t1)
+    | EPack (t, e, s) ->
+      (match freshen env t, infer env e, freshen env s with
+       | t, t', TExists (a, s) ->
+         (match Kind.hequal (TVar.kind a) (kind t) with
+          | Some Util.Equal when Type.Equiv.equiv t' (Subst.subst_one a t t') ->
+            TExists (a, s)
+          | Some Util.Equal -> Error.expected_matching_type t' s
+          | None -> Error.expected_matching_kind (TVar.kind a) (kind t'))
+       | _, _, s -> Error.expected_existential_type s)
+    | EUnpack (a, x, e1, e2) ->
+      (match infer env e1 with
+       | TExists (a', s) ->
+         (match Kind.hequal (TVar.kind a) (TVar.kind a') with
+          | Some Util.Equal ->
+            let a, env = Env.add_typ a env in
+            let env = Env.add_var x (Subst.subst_tvar a' a s) env in
+            infer env e2
+          | None -> Error.expected_matching_kind (TVar.kind a) (TVar.kind a'))
+       | t -> Error.expected_existential_type t)
+    | EExternal (_, t) -> freshen env t
+    | ECond (c, e1, e2) ->
+      (match infer env c with
+       | TPrim PrimBool ->
+         (match infer env e1, infer env e2 with
+          | t1, t2 when Type.Equiv.equiv t1 t2 -> t1
+          | t1, t2 -> Error.expected_matching_type t1 t2)
+       | t -> Error.expected_bool t)
   ;;
 end
 
 module Eval = struct
-  type env = (string -> value option) * value list
+  open Expr
+  open Value
 
-  let env ext = ext, []
-  let add_var x (ext, env) = ext, x :: env
-  let find_var x (_, env) = List.nth env x
+  module Env : sig
+    type t
+
+    val init : (string -> Value.t option) -> t
+    val add_var : var -> Value.t -> t -> t
+    val find_var : Var.t -> t -> Value.t
+    val find_external : string -> t -> Value.t option
+  end = struct
+    type t =
+      { ext : string -> Value.t option
+      ; vars : Value.t Var.Map.t
+      }
+
+    let init ext = { ext; vars = Var.Map.empty }
+    let add_var x v env = { env with vars = Var.Map.add x v env.vars }
+    let find_var x env = Var.Map.find x env.vars
+    let find_external x env = env.ext x
+  end
 
   let rec eval env = function
-    | TmVar x -> find_var x env
-    | TmPrim c -> ValPrim c
-    | TmLam (_, _, e) -> ValLam (snd env, e)
-    | TmExternal n ->
-      (match fst env n with
-       | Some v -> v
-       | None -> Error.undefined_external n)
-    | TmApp (e1, e2) ->
+    | EVar x -> Env.find_var x env
+    | EPrim p -> VPrim p
+    | ELam (x, _, e) -> VLam (fun v -> eval (Env.add_var x v env) e)
+    | EApp (e1, e2) ->
       (match eval env e1, eval env e2 with
-       | ValLam (v, e), v2 -> eval (add_var v2 (fst env, v)) e
-       | ValNative f, v -> f v
+       | (VLam f | VExternal f), v -> f v
        | _ -> assert false)
-    | TmRecord es -> ValRecord (List.map (fun (l, e) -> l, eval env e) es)
-    | TmProj (e, l) ->
+    | ERecord es ->
+      let vs = List.map (fun (l, e) -> l, eval env e) es in
+      VRecord vs
+    | EProj (e, l) ->
       (match eval env e with
-       | ValRecord ts -> List.assoc l ts
+       | VRecord ts -> List.assoc l ts
        | _ -> assert false)
-    | TmTyLam (_, _, e) -> ValTyLam (snd env, e)
-    | TmTyApp (e, _) ->
+    | ETyLam (_, e) -> VTyLam (fun () -> eval env e)
+    | ETyApp (e, _) ->
       (match eval env e with
-       | ValTyLam (v, e) -> eval (fst env, v) e
-       | ValNative f -> ValNative f
-       | _ -> assert false)
-    | TmPack (_, e, _, _, _) -> ValPack (eval env e)
-    | TmUnpack (_, _, e1, e2) ->
+       | VTyLam f -> f ()
+       | VExternal f -> VExternal f
+       | v ->
+         Format.asprintf "not callable: %a = %a\n%!" PP.pp_expr e PP.pp_value v
+         |> failwith)
+    | EPack (_, e, _) -> VPack (eval env e)
+    | EUnpack (_, x, e1, e2) ->
       (match eval env e1 with
-       | ValPack v -> eval (add_var v env) e2
+       | VPack v -> eval (Env.add_var x v env) e2
        | _ -> assert false)
-  ;;
-
-  let eval env e =
-    let typ = Type.typeof [] e in
-    let value = eval env e in
-    value, typ
+    | EExternal (id, _) ->
+      (match Env.find_external id env with
+       | Some v -> v
+       | None -> Error.undefined_external_symbol id)
+    | ECond (c, e1, e2) ->
+      (match eval env c with
+       | VPrim (ConstBool true) -> eval env e1
+       | VPrim (ConstBool false) -> eval env e2
+       | _ -> assert false)
   ;;
 end
