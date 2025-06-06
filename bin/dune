@@ -1,0 +1,5 @@
+(executable
+ (public_name 1ml)
+ (name main)
+ (libraries OneMl)
+ (modes byte exe))

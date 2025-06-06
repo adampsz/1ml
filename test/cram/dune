@@ -1,0 +1,3 @@
+(cram
+ (deps
+  (glob_files *.1ml)))

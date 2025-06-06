@@ -55,10 +55,8 @@ let run parse lexbuf =
     Format.printf "%a :: %a\n%!" PP.pp_value value PP.pp_typ typ
   in
   try parse Lexer.token lexbuf |> List.iter aux with
-  | Error.Error e -> Format.eprintf "Error: %s\n%!" e
-  | Parser.Error ->
-    let pos = lexbuf.Lexing.lex_start_p in
-    Format.eprintf "Parse error at %d:%d\n%!" pos.pos_lnum (pos.pos_cnum - pos.pos_bol)
+  | OneMl.Diagnostic.Error.Error diag ->
+    Format.eprintf "%a\n%!" (OneMl.Diagnostic.pp ?read:None) diag
 ;;
 
 let rec repl () =

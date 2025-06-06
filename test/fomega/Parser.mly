@@ -122,6 +122,14 @@
     let x, env' = add_var x env in
     EApp (ELam (x, ttyp (t env), e2 env'), e1 env)
   ;;
+
+  let desugar_expr_pack t e s env =
+    match t env, ttyp (s env) with
+    | TEx t, TExists (a, s) -> (match Kind.hequal (Type.kind t) (TVar.kind a) with
+        | Some Util.Equal -> EPack (t, e env, a, s)
+        | None -> failwith "Expected matching kind")
+    | _, _ -> failwith "Expected existential type"
+  ;;
 %}
 
 %%
@@ -197,10 +205,7 @@ expr:
   | e=expr_app { e }
   | "lambda" es=expr_param_list "." e=expr { desugar_var_param_list e es }
 
-  | "pack" t=typ "," e=expr "as" s=typ { fun env ->
-      let TEx t = t env in
-      EPack (t, e env, ttyp (s env))
-    }
+  | "pack" t=typ "," e=expr "as" s=typ { desugar_expr_pack t e s }
 
   | "unpack" a=IDENT k=kind_annot "," x=IDENT "=" e1=expr "in" e2=expr { fun env ->
       let KEx k = k in
@@ -232,11 +237,11 @@ expr_atom:
   | "(" e=expr ")" { e }
 
   | id=IDENT { find_var id }
-  | "(" ")"  { Fun.const (EPrim (ConstUnit ())) }
-  | "true"   { Fun.const (EPrim (ConstBool true)) }
-  | "false"  { Fun.const (EPrim (ConstBool false)) }
-  | x=INT    { Fun.const (EPrim (ConstInt x)) }
-  | s=STRING { Fun.const (EPrim (ConstString s)) }
+  | "(" ")"  { Fun.const (EConst (ConstUnit ())) }
+  | "true"   { Fun.const (EConst (ConstBool true)) }
+  | "false"  { Fun.const (EConst (ConstBool false)) }
+  | x=INT    { Fun.const (EConst (ConstInt x)) }
+  | s=STRING { Fun.const (EConst (ConstString s)) }
 
   | x=expr_atom "." l=label               { fun env -> EProj (x env, l) }
   | "(" "external" id=IDENT ":" t=typ ")" { fun env -> EExternal (id, ttyp (t env)) }

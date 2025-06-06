@@ -1,3 +1,7 @@
 (library
  (name OneMl))
 
+(ocamllex Lexer)
+
+(menhir
+ (modules Parser))
