@@ -59,6 +59,7 @@ module Ast = struct
     | TStruct of decl list
     | TArrow of ident * typ * eff * typ
     | TSingleton of expr
+    | TWrapped of typ
 
   and decl = decl_data node
 
@@ -79,6 +80,8 @@ module Ast = struct
     | EType of typ
     | ESeal of ident * typ
     | EExternal of string * typ
+    | EWrap of ident * typ
+    | EUnwrap of ident * typ
 
   and bind = bind_data node
 
@@ -126,6 +129,7 @@ module PP = struct
       let pp = fprintf ppf "(%a: %a) %a (%a)" in
       pp pp_ident x pp_typ t1 pp_eff_arrow eff pp_typ t2
     | TExpr e -> fprintf ppf "(%a)" pp_expr e
+    | TWrapped t -> fprintf ppf "wrap (%a)" pp_typ t
 
   and pp_decl ppf d =
     match d.data with
@@ -156,6 +160,8 @@ module PP = struct
     | EType t -> fprintf ppf "(type %a)" pp_typ t
     | ESeal (e, t) -> fprintf ppf "(%a) :> (%a)" pp_ident e pp_typ t
     | EExternal (s, t) -> fprintf ppf "(external %s: %a)" s pp_typ t
+    | EWrap (e, t) -> fprintf ppf "wrap (%a) : (%a)" pp_ident e pp_typ t
+    | EUnwrap (e, t) -> fprintf ppf "unwrap (%a) : (%a)" pp_ident e pp_typ t
 
   and pp_bind ppf b =
     match b.data with
@@ -218,6 +224,16 @@ module Sugar = struct
   ;;
 
   let expr_fun ?span ps e = List.fold_right (fun (p, t) e -> EFun (p, t, e) @@ span) ps e
+
+  let expr_wrap ?span e t =
+    let b, x = expr_var_bind e in
+    expr_let_in ?span b (EWrap (x, t) @@ span)
+  ;;
+
+  let expr_unwrap ?span e t =
+    let b, x = expr_var_bind e in
+    expr_let_in ?span b (EUnwrap (x, t) @@ span)
+  ;;
 
   let typ_with ?span:_ t ps =
     let aux (p, t) acc = TArrow (p, t, Pure, acc) @@ None in

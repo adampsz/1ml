@@ -45,7 +45,9 @@
 %token KW_THEN     "then"
 %token KW_TRUE     "true"
 %token KW_TYPE     "type"
+%token KW_UNWRAP   "unwrap"
 %token KW_WITH     "with"
+%token KW_WRAP     "wrap"
 
 %right "->" "=>"
 %left ":>" ":" "with"
@@ -110,6 +112,7 @@ param_with:
 
 typ_app:
   | t=typ_atom ts=typ_atom* { Sugar.typ_app ~span:$loc t ts }
+  | "wrap" t=typ_app        { TWrapped t @@ $loc }
 ;
 
 typ_atom:
@@ -168,6 +171,9 @@ expr_op:
   | lhs=expr_op op=op("+")  rhs=expr_op { Sugar.expr_op ~span:$loc op lhs rhs }
   | lhs=expr_op op=op("*")  rhs=expr_op { Sugar.expr_op ~span:$loc op lhs rhs }
   | lhs=expr_op op=op("**") rhs=expr_op { Sugar.expr_op ~span:$loc op lhs rhs }
+
+  | "wrap"   e=expr_op ":" t=typ_app { Sugar.expr_wrap   ~span:$loc e t }
+  | "unwrap" e=expr_op ":" t=typ_app { Sugar.expr_unwrap ~span:$loc e t }
 ;
 
 %inline

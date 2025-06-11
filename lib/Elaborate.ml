@@ -52,6 +52,7 @@ module Error = struct
   let expected_record_type = expected_type "a record"
   let expected_function_type = expected_type "a function"
   let expected_boolean_type = expected_type "a boolean"
+  let expected_wrapped_type = expected_type "a wrapped type"
 
   let subtype_type_mismatch ?span t' t =
     let pp = error ?span "type mismatch, expected %a, but got %a" in
@@ -126,6 +127,11 @@ module Subtype = struct
   open Type
   open Expr
 
+  let ident_of_field ?span = function
+    | Field.FNamed name -> { data = Ident.Named name; span }
+    | Field.FSynthetic id -> { data = Ident.Synthetic id; span }
+  ;;
+
   let path_matches ps t =
     match Type.as_path t with
     | Some p -> Path.Set.mem p ps
@@ -173,15 +179,34 @@ module Subtype = struct
       when Type.is_small t' && path_matches ps t ->
       path_subst t' (Type.as_path t |> Option.get), fun _ e -> e
     | TNeu n', TNeu n ->
-      (match Type.as_path (TNeu n'), Type.as_path (TNeu n) with
-       | Some p', Some p when Path.equal p' p -> Subst.empty, fun _ e -> e
-       | _, _ -> Error.subtype_type_mismatch t' t)
+      let rec aux : type k1 k2. k1 neutral -> k2 neutral -> (k1, k2) eq =
+        fun n' n ->
+        match n', n with
+        | TVar a', TVar a ->
+          (match TVar.hequal a' a with
+           | Some eq -> eq
+           | None -> Error.subtype_type_mismatch t' t)
+        | TVar _, _ -> Error.subtype_type_mismatch t' t
+        | TApp (n', t'), TApp (n, t) ->
+          let Equal = aux n' n in
+          (match Kind.hequal (Type.kind t) KType with
+           | Some Equal ->
+             equiv env (t' : ttyp) (t : ttyp);
+             Equal
+           | None -> Error.subtype_type_mismatch t' t)
+        | TApp _, _ -> Error.subtype_type_mismatch t' t
+      in
+      let _ = aux n' n in
+      Subst.empty, fun _ e -> e
     | TNeu _, _ -> Error.subtype_type_mismatch t' t
     | TSingleton t', TSingleton t ->
-      let _, _ = qsubtype env t' t Path.Set.empty
-      and _, _ = qsubtype env t t' Path.Set.empty in
+      qequiv env t' t;
       Subst.empty, fun _ _ -> ESingleton t
     | TSingleton _, _ -> Error.subtype_type_mismatch t' t
+    | TWrapped t', TWrapped t ->
+      qequiv env t' t;
+      Subst.empty, fun _ e -> e
+    | TWrapped _, _ -> Error.subtype_type_mismatch t' t
     | TEffArrow (ats', t1', eff', t2'), TEffArrow (ats, t1, eff, t2)
       when Effect.sub eff' eff ->
       let add_args ats p =
@@ -214,9 +239,13 @@ module Subtype = struct
       let rec aux = function
         | _, [], _ -> Subst.empty, []
         | ts', (l, t) :: ts, p ->
-          let sub, f = subtype env (List.assoc l ts') t p in
-          let subs, fs = aux (ts', List.map (fun (l, t) -> l, Subst.subst sub t) ts, p) in
-          Subst.merge_disjoint sub subs, f :: fs
+          (match List.assoc_opt l ts' with
+           | Some t' ->
+             let sub, f = subtype env t' t p in
+             let ts = List.map (fun (l, t) -> l, Subst.subst sub t) ts in
+             let subs, fs = aux (ts', ts, p) in
+             Subst.merge_disjoint sub subs, f :: fs
+           | None -> Error.undefined_record_field (ident_of_field l))
       in
       let ts, fes = aux (fs', fs, ps) in
       let f env x =
@@ -225,6 +254,16 @@ module Subtype = struct
       in
       ts, f
     | TRecord _, _ -> Error.subtype_type_mismatch t' t
+
+  and equiv env t' t =
+    let _, _ = subtype env t' t Path.Set.empty
+    and _, _ = subtype env t t' Path.Set.empty in
+    ()
+
+  and qequiv env t' t =
+    let _, _ = qsubtype env t' t Path.Set.empty
+    and _, _ = qsubtype env t t' Path.Set.empty in
+    ()
 
   and subtype env t' t ps =
     Tracing.trace4 trace "subtype" _subtype env t' t ps
@@ -351,6 +390,9 @@ module Elab = struct
       (match expr env e with
        | Pure, t, _ -> t
        | Impure, _, _ -> Error.expected_pure_expression ?span e)
+    | S.TWrapped t ->
+      let t = typ env t in
+      TExists ([], TWrapped t)
 
   and decl env = function
     | [] -> [], []
@@ -429,6 +471,20 @@ module Elab = struct
       let eff = if ats2 = [] then Pure else Impure in
       let e = EPack (fe env (EVar x), sub_pack sub ats2, t2) in
       eff, TExists (ats2, t2), e
+    | EWrap (x, t) ->
+      (match Env.find_var x env, typ env t with
+       | (x, t'), TExists ([], TWrapped t) ->
+         let _, fe = Subtype.qsubtype env (TExists ([], t')) t Path.Set.empty in
+         Pure, TExists ([], TWrapped t), EWrap (fe env (EVar x))
+       | _, t -> Error.expected_wrapped_type ?span t)
+    | EUnwrap (x, t) ->
+      (match Env.find_var x env, typ env t with
+       | (x, TWrapped t'), TExists ([], TWrapped t) ->
+         let _, fe = Subtype.qsubtype env t' t Path.Set.empty in
+         let (TExists (ats, _)) = t in
+         (if ats = [] then Pure else Impure), t, fe env (EUnwrap (EVar x))
+       | (_, TWrapped _), t' -> Error.expected_wrapped_type ?span:t.span t'
+       | (_, t'), _ -> Error.expected_wrapped_type ?span:t.span (TExists ([], t')))
     | EExternal (s, t) ->
       (match typ ~name:{ data = Named s; span = None } env t with
        | TExists ([], t) -> Pure, TExists ([], t), EExternal (s, t)

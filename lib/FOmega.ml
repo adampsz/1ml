@@ -564,7 +564,7 @@ module Eval = struct
     let find_external x env = env.ext x
   end
 
-  let rec eval env = function
+  let rec _eval env = function
     | EVar x -> Env.find_var x env
     | EConst p -> VPrim p
     | ELam (x, _, e) -> VLam (fun v -> eval (Env.add_var x v env) e)
@@ -599,5 +599,13 @@ module Eval = struct
        | VPrim (ConstBool true) -> eval env e1
        | VPrim (ConstBool false) -> eval env e2
        | _ -> assert false)
+
+  and eval env e =
+    Tracing.trace2 trace "eval" _eval env e
+    @@ fun tr f ->
+    Tracing.printf tr "%a" PP.pp_expr e;
+    let v = f () in
+    Tracing.printf tr "= %a" PP.pp_value v;
+    v
   ;;
 end

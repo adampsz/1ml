@@ -65,11 +65,11 @@ let binary_impure f = VExternal (impure (fun x -> VExternal (impure (f x))))
 let builtin = function
   | "panic" -> Some (unary_impure panic)
   | "print" -> Some (unary_impure print)
-  | "iadd" -> Some (binary_pure iadd)
-  | "isub" -> Some (binary_pure isub)
-  | "imul" -> Some (binary_pure imul)
-  | "idiv" -> Some (binary_pure idiv)
-  | "imod" -> Some (binary_pure imod)
-  | "ipow" -> Some (binary_pure ipow)
+  | "iadd" -> Some (binary_impure iadd)
+  | "isub" -> Some (binary_impure isub)
+  | "imul" -> Some (binary_impure imul)
+  | "idiv" -> Some (binary_impure idiv)
+  | "imod" -> Some (binary_impure imod)
+  | "ipow" -> Some (binary_impure ipow)
   | _ -> None
 ;;

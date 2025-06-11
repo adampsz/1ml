@@ -151,8 +151,9 @@ module Type = struct
     | TLam : 'k1 TVar.t * 'k2 typ -> ('k1 -> 'k2) typ
     | TPrim : Prim.t -> ktyp typ
     | TRecord : (Field.t * ktyp typ) list -> ktyp typ
-    | TSingleton : qtyp -> ktyp typ
     | TEffArrow : TVar.ex list * ktyp typ * eff * qtyp -> ktyp typ
+    | TSingleton : qtyp -> ktyp typ
+    | TWrapped : qtyp -> ktyp typ
 
   and qtyp = TExists of TVar.ex list * ktyp typ
 
@@ -175,7 +176,24 @@ module Type = struct
     in
     match t with
     | TNeu n -> aux n
-    | TPrim _ | TRecord _ | TSingleton _ | TEffArrow _ -> None
+    | TPrim _ | TRecord _ | TEffArrow _ | TSingleton _ | TWrapped _ -> None
+  ;;
+
+  let rec kind : type k. k typ -> k kind =
+    let rec aux : type k. k neutral -> k kind = function
+      | TVar x -> TVar.kind x
+      | TApp (n, _) ->
+        let (KArrow (_, k)) = aux n in
+        k
+    in
+    function
+    | TNeu n -> aux n
+    | TLam (x, t) -> KArrow (TVar.kind x, kind t)
+    | TPrim _ -> KType
+    | TRecord _ -> KType
+    | TEffArrow _ -> KType
+    | TSingleton _ -> KType
+    | TWrapped _ -> KType
   ;;
 
   module Subst : sig
@@ -185,9 +203,11 @@ module Type = struct
     val cardinal : sub -> int
     val merge_disjoint : sub -> sub -> sub
     val add : 'k TVar.t -> 'k typ -> sub -> sub
+    val add_tvar : 'k TVar.t -> 'k TVar.t -> sub -> sub
+    val add_tvars : TVar.ex list -> TVar.ex list -> sub -> sub option
+    val add_fresh_tvars : TVar.ex list -> sub -> TVar.ex list * sub
     val find : 'k TVar.t -> sub -> 'k typ
     val find_opt : 'k TVar.t -> sub -> 'k typ option
-    val add_fresh_tvars : TVar.ex list -> sub -> TVar.ex list * sub
     val subst : sub -> 'k typ -> 'k typ
     val qsubst : sub -> qtyp -> qtyp
   end = struct
@@ -203,6 +223,16 @@ module Type = struct
     let add = TVSub.add
     let find = TVSub.find
     let find_opt = TVSub.find_opt
+    let add_tvar x y sub = add x (TNeu (TVar y)) sub
+
+    let add_tvars xs ys sub =
+      let f sub (TVar.Ex x) (TVar.Ex y) =
+        match sub, Kind.hequal (TVar.kind x) (TVar.kind y) with
+        | Some sub, Some Equal -> Some (add_tvar x y sub)
+        | _, _ -> None
+      in
+      if List.compare_lengths xs ys = 0 then List.fold_left2 f (Some sub) xs ys else None
+    ;;
 
     let add_fresh_tvars ats sub =
       let aux sub (TVar.Ex x) =
@@ -221,10 +251,11 @@ module Type = struct
         TLam (y, subst (TVSub.add x (TNeu (TVar y)) sub) t)
       | TPrim p -> TPrim p
       | TRecord fields -> TRecord (List.map (fun (l, t) -> l, subst sub t) fields)
-      | TSingleton t -> TSingleton (qsubst sub t)
       | TEffArrow (ats, t1, eff, t2) ->
         let ats, sub = add_fresh_tvars ats sub in
         TEffArrow (ats, subst sub t1, eff, qsubst sub t2)
+      | TSingleton t -> TSingleton (qsubst sub t)
+      | TWrapped t -> TWrapped (qsubst sub t)
 
     and qsubst sub = function
       | TExists (ats, t) ->
@@ -254,13 +285,16 @@ module Type = struct
       | TRecord fields ->
         let f acc (_, t) = TVar.Set.union acc (aux t) in
         List.fold_left f TVar.Set.empty fields
-      | TSingleton (TExists (ats, t)) ->
-        let f acc (TVar.Ex x) = TVar.Set.remove x acc in
-        List.fold_left f (aux t) ats
       | TEffArrow (ats1, t1, _, TExists (ats2, t2)) ->
         let f acc (TVar.Ex x) = TVar.Set.remove x acc in
         let acc = List.fold_left f (aux t2) ats1 in
         List.fold_left f (TVar.Set.union acc (aux t1)) ats2
+      | TSingleton (TExists (ats, t)) ->
+        let f acc (TVar.Ex x) = TVar.Set.remove x acc in
+        List.fold_left f (aux t) ats
+      | TWrapped (TExists (ats, t)) ->
+        let f acc (TVar.Ex x) = TVar.Set.remove x acc in
+        List.fold_left f (aux t) ats
     and aux_neutral : type k. k neutral -> _ = function
       | TVar x -> TVar.Set.singleton x
       | TApp (n, t) -> TVar.Set.union (aux_neutral n) (aux t)
@@ -268,20 +302,22 @@ module Type = struct
     aux t
   ;;
 
-  let rec is_small : type k. k typ -> _ = function
-    | TNeu n -> is_small_nautral n
-    | TLam (_, t) -> is_small t
-    | TPrim _ -> true
-    | TRecord fields -> List.for_all (fun (_, t) -> is_small t) fields
-    | TSingleton (TExists ([], t)) -> is_small t
-    | TSingleton (TExists (_, _)) -> false
-    | TEffArrow ([], t1, eff, TExists ([], t2)) ->
-      is_small t1 && eff = Impure && is_small t2
-    | TEffArrow (_, _, _, TExists (_, _)) -> false
-
-  and is_small_nautral : type k. k neutral -> _ = function
-    | TVar _ -> true
-    | TApp (n, t) -> is_small_nautral n && is_small t
+  let is_small t =
+    let rec aux : type k. k typ -> _ = function
+      | TNeu n -> aux_neutral n
+      | TLam (_, t) -> aux t
+      | TPrim _ -> true
+      | TRecord fields -> List.for_all (fun (_, t) -> aux t) fields
+      | TEffArrow ([], t1, eff, TExists ([], t2)) -> aux t1 && eff = Impure && aux t2
+      | TEffArrow (_, _, _, TExists (_, _)) -> false
+      | TSingleton (TExists ([], t)) -> aux t
+      | TSingleton (TExists (_, _)) -> false
+      | TWrapped _ -> true
+    and aux_neutral : type k. k neutral -> _ = function
+      | TVar _ -> true
+      | TApp (n, t) -> aux_neutral n && aux t
+    in
+    aux t
   ;;
 end
 
@@ -331,9 +367,11 @@ module Expr = struct
     | EUnpack of TVar.ex list * Var.t * qtyp * expr * expr
     | ECond of expr * expr * expr
     | ELet of Var.t * qtyp * expr * expr
-    | ESingleton of qtyp
     | EEffLam of TVar.ex list * Var.t * ttyp * eff * expr
     | EEffApp of expr * ex list * expr * eff
+    | ESingleton of qtyp
+    | EWrap of expr
+    | EUnwrap of expr
 
   type t = expr
 end
@@ -398,6 +436,7 @@ module PP = struct
       and pp_sep ppf () = fprintf ppf "; " in
       fprintf ppf "{ %a }" (pp_print_list ~pp_sep pp_field) fields
     | TSingleton t -> fprintf ppf "(= %a)" (pp_qtyp ~p:0) t
+    | TWrapped t -> fprintf ppf "[%a]" (pp_qtyp ~p:0) t
     (* Precedence 0 *)
     | TEffArrow ([], t1, eff, t2) ->
       let pp = wrap (p > 0) ppf "%a →%a %a" in
@@ -474,6 +513,8 @@ module PP = struct
     | ELet (id, qtyp, e1, e2) ->
       let pp = wrap (p > 0) ppf "let %a: %a = %a in %a" in
       pp pp_var id pp_qtyp qtyp pp_expr e1 pp_expr e2
+    | EWrap e -> wrap (p > 0) ppf "wrap %a" (pp_expr ~p:0) e
+    | EUnwrap e -> wrap (p > 0) ppf "unwrap %a" (pp_expr ~p:0) e
     | EEffLam (uats, id, t, eff, e) ->
       let pp_sep ppf () = pp_print_string ppf ", "
       and pp_tuvar ppf (TVar.Ex x) = pp_tvar_param ppf x in
@@ -574,6 +615,10 @@ module Translate = struct
     | () -> "%t"
   ;;
 
+  let field_wrapped = function
+    | () -> "%w"
+  ;;
+
   let field = function
     | S.FNamed l -> l
     | S.FSynthetic id -> Printf.sprintf "%%%d" id
@@ -611,6 +656,9 @@ module Translate = struct
       let t = qtyp env t in
       let singleton = T.TArrow (t, TRecord []) in
       Ex (KType, TRecord [ field_singleton (), singleton ])
+    | S.TWrapped t ->
+      let t = qtyp env t in
+      Ex (KType, T.TRecord [ field_wrapped (), t ])
     | S.TEffArrow (ats, t1, eff, t2) ->
       let rec aux env = function
         | [] ->
@@ -671,7 +719,7 @@ module Translate = struct
       expr env (S.ELet (x, S.TExists ([], t), e, S.EVar x))
     | S.EPack (e, ts, s) ->
       let ts, s = pack_sig env ts s in
-      let mksig ts s = List.fold_left (fun s (Ex (_, a, _)) -> T.TExists (a, s)) s ts in
+      let mksig ts s = List.fold_right (fun (Ex (_, a, _)) s -> T.TExists (a, s)) ts s in
       let rec aux s = function
         | [] -> expr env e
         | Ex (_, a, t) :: ts ->
@@ -702,6 +750,8 @@ module Translate = struct
       let x = T.Var.fresh () in
       let singleton = T.ELam (x, qtyp env t, T.ERecord []) in
       T.ERecord [ field_singleton (), singleton ]
+    | S.EWrap e -> T.ERecord [ field_wrapped (), expr env e ]
+    | S.EUnwrap e -> T.EProj (expr env e, field_wrapped ())
     | S.EEffLam (ats, x, t, eff, e) ->
       let rec aux env = function
         | [] ->

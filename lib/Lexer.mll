@@ -20,7 +20,9 @@
     | "then"     -> KW_THEN
     | "true"     -> KW_TRUE
     | "type"     -> KW_TYPE
+    | "unwrap"   -> KW_UNWRAP
     | "with"     -> KW_WITH
+    | "wrap"     -> KW_WRAP
     | id         -> ID id
   ;;
 

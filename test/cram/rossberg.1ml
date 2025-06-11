@@ -4,17 +4,17 @@
  *)
 
 (* Minimal std, later to be included elsewhere *)
-std = {
-    operators = {
-        external ( + ) : int => int => int = "iadd";
-        external ( - ) : int => int => int = "isub";
-        external ( * ) : int => int => int = "imul";
-        external ( / ) : int => int => int = "idiv";
-        external ( % ) : int => int => int = "imod";
-        external ( ** ) : int => int => int = "ipow";
+Std = {
+    Operators = {
+        external ( + ) : int -> int -> int = "iadd";
+        external ( - ) : int -> int -> int = "isub";
+        external ( * ) : int -> int -> int = "imul";
+        external ( / ) : int -> int -> int = "idiv";
+        external ( % ) : int -> int -> int = "imod";
+        external ( ** ) : int -> int -> int = "ipow";
     };
 
-    option = {
+    Option = {
         type opt a = unit;
         none a = ();
         some a (x: a) = ();
@@ -24,13 +24,34 @@ std = {
         some a (x: a): opt a;
     };
 
-    prelude = {
-        include operators;
-        include option;
+    List = {
+        type list a = unit;
+        nil a = ();
+        cons a (x: a) (xs: list a) = ();
+
+        foldl a b (xs: list a) (init: b) (f: b -> a -> b) = init;
+        map a b (xs: list a) (f: a -> b) = ();
+    } :> {
+        type list a;
+        nil a: list a;
+        cons a: a -> list a -> list a;
+
+        foldl a b: list a -> b -> (b -> a -> b) -> b;
+        map a b: list a -> (a -> b) -> list b;
+    };
+
+    Prelude = {
+        include Operators;
+        include Option;
+
+        List = List;
+        list = List.list;
+        nil = List.nil;
+        cons = List.cons;
     };
 };
 
-include std.prelude;
+include Std.Prelude;
 
 (* Section 2: 1ML with Explicit Types *)
 
@@ -120,11 +141,11 @@ H = fun (a : type) => (type {x : a} :> type);
 
 f (id : (a : type) => a -> a) = { x = id int 5; y = id bool true };
 
-(*type SHAPE = {type t; area : t -> int; v : t};
+type SHAPE = {type t; area : t -> int; v : t};
 volume (height : int) (s : SHAPE) = height * s.area (s.v);
-area ss = List.foldl ss 0 (fun a (wrap s : wrap SHAPE) => a + s.area (s.v));*)
+area (ss: List.list (wrap SHAPE)) = List.foldl (type (wrap SHAPE)) int ss 0 (fun (a : int) (s : wrap SHAPE) => let s: SHAPE = unwrap s: wrap SHAPE in a + s.area s.v);
 
-(*type COLL c =
+type COLL c =
 {
   type key;
   type val;
@@ -133,14 +154,16 @@ area ss = List.foldl ss 0 (fun a (wrap s : wrap SHAPE) => a + s.area (s.v));*)
   lookup : c -> key -> opt val;
   keys : c -> list key
 };
-entries (c : type) (C : COLL c) (xs : c) : list (type (C.key, C.val)) =
-  List.map (C.keys xs) (fun (k : C.key) => (k, caseopt (C.lookup xs k) bot id));
 
-type MONAD (m : type => type) =
+(*entries (c : type) (C : COLL c) (xs : c) : list (type (C.key, C.val)) =
+  List.map (C.keys xs) (fun (k : C.key) => (k, caseopt (C.lookup xs k) bot id));*)
+
+(*type MONAD (m : type => type) =
 {
   return (a : type) : a -> m a;
   bind (a : type) (b : type) : m a -> (a -> m b) -> m b
 };
+
 map (a : type) (b : type) (m : type => type) (M : MONAD m) (f : a -> b) (mx : m a) =
   M.bind a b mx (fun (x : a) => M.return b (f x));  ;; : m b
 
