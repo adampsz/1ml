@@ -5,6 +5,16 @@
 
 (* Minimal std, later to be included elsewhere *)
 Std = {
+    Primitives = {
+        type unit = external "unit";
+        type int = external "int";
+        type bool = external "bool";
+        type float = external "float";
+        type string = external "string";
+    };
+
+    include Primitives;
+
     Operators = {
         external ( + ) : int -> int -> int = "iadd";
         external ( - ) : int -> int -> int = "isub";
@@ -12,6 +22,10 @@ Std = {
         external ( / ) : int -> int -> int = "idiv";
         external ( % ) : int -> int -> int = "imod";
         external ( ** ) : int -> int -> int = "ipow";
+        external ( > ) : int -> int -> bool = "igt";
+        external ( < ) : int -> int -> bool = "ilt";
+        external ( >= ) : int -> int -> bool = "ige";
+        external ( <= ) : int -> int -> bool = "ile";
     };
 
     Option = {
@@ -41,6 +55,7 @@ Std = {
     };
 
     Prelude = {
+        include Primitives;
         include Operators;
         include Option;
 
@@ -158,32 +173,32 @@ type COLL c =
 (*entries (c : type) (C : COLL c) (xs : c) : list (type (C.key, C.val)) =
   List.map (C.keys xs) (fun (k : C.key) => (k, caseopt (C.lookup xs k) bot id));*)
 
-(*type MONAD (m : type => type) =
+type MONAD (m : type => type) =
 {
-  return (a : type) : a -> m a;
-  bind (a : type) (b : type) : m a -> (a -> m b) -> m b
+  return a : a -> m a;
+  bind a b : m a -> (a -> m b) -> m b
 };
 
-map (a : type) (b : type) (m : type => type) (M : MONAD m) (f : a -> b) (mx : m a) =
-  M.bind a b mx (fun (x : a) => M.return b (f x));  ;; : m b
+map a b (m : type => type) (M : MONAD m) (f : a -> b) (mx : m a) =
+  M.bind a b mx (fun (x : a) => M.return b (f x));
 
-;; ...the same with implicit types:
-type MONAD (m : type => type) =
+(* ...the same with implicit types: *)
+(*type MONAD (m : type => type) =
 {
   return 'a : a -> m a;
   bind 'a 'b : m a -> (a -> m b) -> m b
 };
 map (m : type => type) (M : MONAD m) f mx =
-  M.bind mx (fun x => M.return (f x));
+  M.bind mx (fun x => M.return (f x));*)
 
-;; Computed Modules
+(* Computed Modules *)
 
-pickTable (size : int) (threshold : int) (HashMap : MAP) (TreeMap : MAP) =
+(*pickTable (size : int) (threshold : int) (HashMap : MAP) (TreeMap : MAP) =
 {
   Table = if size > threshold then HashMap else TreeMap : MAP
-};
+};*)
 
-(;
+(*(;
 type MONAD =
 {
   type t a;

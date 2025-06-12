@@ -241,26 +241,6 @@ module Sugar = struct
     List.fold_right aux ps t
   ;;
 
-  let typ_app ?span t = function
-    | [] -> t
-    | ts ->
-      let e =
-        match t.data with
-        | TExpr e -> e
-        | _ -> EType t @@ t.span (* This will report more meaningful error later *)
-      in
-      TExpr (expr_app e (List.map (fun t -> EType t @@ t.span) ts)) @@ span
-  ;;
-
-  let typ_proj ?span t id =
-    let e =
-      match t.data with
-      | TExpr e -> e
-      | _ -> EType t @@ t.span (* This will report more meaningful error later *)
-    in
-    TExpr (EProj (e, id) @@ span) @@ span
-  ;;
-
   let bind_typ ?span id ps t = BVal (id, expr_fun ps (EType t @@ t.span)) @@ span
 
   let bind_id ?span id ps ts1 ts2 e =
@@ -278,6 +258,15 @@ module Sugar = struct
         EProj (EStruct ((BVal (x, e) @@ e.span) :: str) @@ e.span, x) @@ e.span
     in
     BVal (id, expr_fun ?span ps e) @@ span
+  ;;
+
+  let typ_external ?span = function
+    | "unit" -> TPrim PrimUnit @@ span
+    | "bool" -> TPrim PrimBool @@ span
+    | "int" -> TPrim PrimInt @@ span
+    | "float" -> TPrim PrimFloat @@ span
+    | "string" -> TPrim PrimString @@ span
+    | _ -> TType @@ span
   ;;
 
   let decl_id ?span id ps t =

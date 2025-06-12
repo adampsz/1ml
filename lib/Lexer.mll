@@ -2,11 +2,6 @@
   open Parser
 
   let token_of_id = function
-    | "unit"     -> KW_UNIT
-    | "bool"     -> KW_BOOL
-    | "int"      -> KW_INT
-    | "float"    -> KW_FLOAT
-    | "string"   -> KW_STRING
     | "and"      -> KW_AND
     | "else"     -> KW_ELSE
     | "external" -> KW_EXTERNAL

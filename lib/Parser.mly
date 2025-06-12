@@ -26,12 +26,6 @@
 %token<string> P_OP_CONCAT "^"
 %token<string> P_OP_CMP    "<"
 
-%token KW_UNIT   "unit"
-%token KW_BOOL   "bool"
-%token KW_INT    "int"
-%token KW_FLOAT  "float"
-%token KW_STRING "string"
-
 %token KW_AND      "and"
 %token KW_ELSE     "else"
 %token KW_EXTERNAL "external"
@@ -111,30 +105,35 @@ param_with:
 ;
 
 typ_app:
-  | t=typ_atom ts=typ_atom* { Sugar.typ_app ~span:$loc t ts }
-  | "wrap" t=typ_app        { TWrapped t @@ $loc }
+  | t=typ_atom       { t }
+  | t=typ_path       { TExpr t @@ $loc }
+  | "wrap" t=typ_app { TWrapped t @@ $loc }
+  | "(" t=typ ")"    { t }
+;
+
+typ_path:
+  | t=typ_path_atom ts=typ_path_arg* { Sugar.expr_app ~span:$loc t ts }
+;
+
+typ_path_arg:
+  | t=typ_path_atom    { t }
+  | t=typ_atom         { EType t @@ $loc }
+  | "(" t=typ_path ")" { t }
+
+  | "(" "wrap" t=typ_app ")"     { EType (TWrapped t @@ $loc) @@ $loc }
+;
+
+typ_path_atom:
+  | id=ident                     { EVar id @@ $loc }
+  | t=typ_path_atom "." id=ident { EProj (t, id) @@ $loc }
 ;
 
 typ_atom:
-  | t=typ_prim    { t }
-  | "type"        { TType @@ $loc }
-  | id=ident      { TExpr (EVar id @@ $loc) @@ $loc }
-
-  | t=typ_atom "." id=ident { Sugar.typ_proj ~span:$loc t id }
-
-  | "(" t=typ ")" { t }
+  | "type"              { TType @@ $loc }
+  | "(" "=" e=expr ")"  { TSingleton e @@ $loc }
+  | "external" x=STRING { Sugar.typ_external ~span:$loc x }
 
   | "{" ds=punctuated_list(";"+, decl) "}" { TStruct ds @@ $loc }
-;
-
-typ_prim:
-  | "unit"        { TPrim Prim.PrimUnit @@ $loc }
-  | "bool"        { TPrim Prim.PrimBool @@ $loc }
-  | "int"         { TPrim Prim.PrimInt @@ $loc }
-  | "float"       { TPrim Prim.PrimFloat @@ $loc }
-  | "string"      { TPrim Prim.PrimString @@ $loc }
-
-  | "(" "=" e=expr ")" { TSingleton e @@ $loc }
 ;
 
 decl:
@@ -149,14 +148,13 @@ decl:
 
 expr:
   | e=expr_op         { e }
-  | "type" t=typ_atom { EType t @@ $loc }
 
   | "fun" ps=param+ "=>" e=expr { Sugar.expr_fun ~span:$loc ps e }
 
   (* Sugar *)
   | "let" b=punctuated_list("and", bind) "in" e=expr %prec LET { Sugar.expr_let_in ~span:$loc b e }
-  | e=expr ":>" t=typ_atom                                     { Sugar.expr_seal   ~span:$loc e t }
-  | e=expr ":"  t=typ_atom                                     { Sugar.expr_annot  ~span:$loc e t }
+  | e=expr ":>" t=typ_app                                     { Sugar.expr_seal   ~span:$loc e t }
+  | e=expr ":"  t=typ_app                                     { Sugar.expr_annot  ~span:$loc e t }
 ;
 
 expr_op:
@@ -183,18 +181,17 @@ op(X):
 
 expr_app:
   | e=expr_atom es=expr_atom* { Sugar.expr_app ~span:$loc e es }
+  | "type" t=typ_app          { EType t @@ $loc }
 ;
 
 expr_atom:
   | id=ident       { EVar id @@ $loc }
-  | t=typ_prim     { EType t @@ $loc }
   | "(" ")"        { EConst (Prim.ConstUnit ()) @@ $loc }
   | "true"         { EConst (Prim.ConstBool true) @@ $loc }
   | "false"        { EConst (Prim.ConstBool false) @@ $loc }
   | x=INT          { EConst (Prim.ConstInt x) @@ $loc }
   | x=FLOAT        { EConst (Prim.ConstFloat x) @@ $loc }
   | x=STRING       { EConst (Prim.ConstString x) @@ $loc }
-
   | "(" e=expr ")" { e }
 
   | e=expr_atom "." id=ident               { EProj (e, id) @@ $loc }
