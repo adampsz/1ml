@@ -12,6 +12,7 @@
     | "include"  -> KW_INCLUDE
     | "let"      -> KW_LET
     | "local"    -> KW_LOCAL
+    | "open"     -> KW_OPEN
     | "then"     -> KW_THEN
     | "true"     -> KW_TRUE
     | "type"     -> KW_TYPE

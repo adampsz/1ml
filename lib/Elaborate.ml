@@ -400,6 +400,13 @@ module Elab = struct
       let (TExists (ats1, t1)) = typ ~name:x env t in
       let ats2, t2 = decl (Env.add_qtyp x ats1 t1 env |> snd) ds in
       ats1 @ ats2, (field x, t1) :: t2
+    | { data = S.DOpen t; _ } :: ds ->
+      (match typ env t with
+       | TExists (ats1, TRecord t1) ->
+         let _, env = Env.add_record ats1 t1 env in
+         let ats2, t2 = decl env ds in
+         ats1 @ ats2, t2
+       | t' -> Error.expected_record_type ?span:t.span t')
     | { data = S.DIncl t; _ } :: ds ->
       (match typ env t with
        | TExists (ats1, TRecord t1) ->
@@ -502,7 +509,7 @@ module Elab = struct
         and ats = List.rev ats1 in
         let e = EPack (ERecord es, ats_repack ats, TRecord ts) in
         eff1, TExists (ats, TRecord ts), e
-        (* TODO: These two arms can be simplified/merged *)
+        (* TODO: These three arms can be simplified/merged *)
       | { data = S.BVal (x, e); _ } :: bs ->
         let eff2, TExists (ats2, t2), e2 = expr env e in
         let l, (x, env) = field x, Env.add_qtyp x ats2 t2 env in
@@ -520,6 +527,19 @@ module Elab = struct
            let eff = Effect.join eff1 eff2
            and ats = List.rev_append ats1 ats2
            and fields = List.rev_append (List.map2 aux_f xs t2) fields in
+           let eff, t, e = aux env eff ats fields bs in
+           let y = Var.fresh () in
+           let e = List.fold_left2 (aux_e y) e xs t2 in
+           let e = EUnpack (ats2, y, TExists (ats2, TRecord t2), e2, e) in
+           eff, t, e
+         | _, t, _ -> Error.expected_record_type ?span:e.span t)
+      | { data = S.BOpen e; _ } :: bs ->
+        let aux_e y e x (l, t) = ELet (x, TExists ([], t), EProj (EVar y, l), e) in
+        (match expr env e with
+         | eff2, TExists (ats2, TRecord t2), e2 ->
+           let xs, env = Env.add_record ats2 t2 env in
+           let eff = Effect.join eff1 eff2
+           and ats = List.rev_append ats1 ats2 in
            let eff, t, e = aux env eff ats fields bs in
            let y = Var.fresh () in
            let e = List.fold_left2 (aux_e y) e xs t2 in

@@ -36,6 +36,7 @@
 %token KW_INCLUDE  "include"
 %token KW_LET      "let"
 %token KW_LOCAL    "local"
+%token KW_OPEN     "open"
 %token KW_THEN     "then"
 %token KW_TRUE     "true"
 %token KW_TYPE     "type"
@@ -138,6 +139,7 @@ typ_atom:
 
 decl:
   | "include" t=typ { DIncl t @@ $loc }
+  | "open"    t=typ { DOpen t @@ $loc }
 
   (* Sugar *)
   | id=ident ps=param* ":" t=typ        { Sugar.decl_id     ~span:$loc id ps t }
@@ -200,6 +202,7 @@ expr_atom:
 
 bind:
   | "include" e=expr { BIncl e @@ $loc }
+  | "open"    e=expr { BOpen e @@ $loc }
 
   (* Sugar *)
   | id=ident ps=param* ts1=preceded(":", typ)* ts2=preceded(":>", typ)* "=" e=expr

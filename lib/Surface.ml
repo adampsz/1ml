@@ -66,6 +66,7 @@ module Ast = struct
   and decl_data =
     | DVal of ident * typ
     | DIncl of typ
+    | DOpen of typ
 
   and expr = expr_data node
 
@@ -88,6 +89,7 @@ module Ast = struct
   and bind_data =
     | BVal of ident * expr
     | BIncl of expr
+    | BOpen of expr
 end
 
 module PP = struct
@@ -135,6 +137,7 @@ module PP = struct
     match d.data with
     | DVal (x, t) -> fprintf ppf "%a: %a" pp_ident x pp_typ t
     | DIncl t -> fprintf ppf "include %a" pp_typ t
+    | DOpen t -> fprintf ppf "open %a" pp_typ t
 
   and pp_expr ppf e =
     match e.data with
@@ -167,6 +170,7 @@ module PP = struct
     match b.data with
     | BVal (x, e) -> fprintf ppf "%a = %a" pp_ident x pp_expr e
     | BIncl e -> fprintf ppf "include %a" pp_expr e
+    | BOpen e -> fprintf ppf "open %a" pp_expr e
   ;;
 end
 

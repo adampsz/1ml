@@ -13,7 +13,7 @@ Std = {
         type string = external "string";
     };
 
-    include Primitives;
+    open Primitives;
 
     Operators = {
         external ( + ) : int -> int -> int = "iadd";
@@ -27,6 +27,8 @@ Std = {
         external ( >= ) : int -> int -> bool = "ige";
         external ( <= ) : int -> int -> bool = "ile";
     };
+
+    open Operators;
 
     Option = {
         type opt a = unit;
@@ -59,14 +61,16 @@ Std = {
         include Operators;
         include Option;
 
-        List = List;
-        list = List.list;
-        nil = List.nil;
-        cons = List.cons;
+        include {
+            list = List.list;
+            nil = List.nil;
+            cons = List.cons;
+        };
     };
 };
 
-include Std.Prelude;
+open Std;
+open Std.Prelude;
 
 (* Section 2: 1ML with Explicit Types *)
 
