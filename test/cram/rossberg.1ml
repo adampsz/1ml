@@ -162,7 +162,7 @@ f (id : (a : type) => a -> a) = { x = id int 5; y = id bool true };
 
 type SHAPE = {type t; area : t -> int; v : t};
 volume (height : int) (s : SHAPE) = height * s.area (s.v);
-area (ss: List.list (wrap SHAPE)) = List.foldl (type (wrap SHAPE)) int ss 0 (fun (a : int) (s : wrap SHAPE) => let s: SHAPE = unwrap s: wrap SHAPE in a + s.area s.v);
+area (ss: List.list (wrap SHAPE)) = List.foldl (type (wrap SHAPE)) int ss 0 (fun (a : int) (s : wrap SHAPE) => let s: SHAPE = unwrap s: (wrap SHAPE) in a + s.area s.v);
 
 type COLL c =
 {
@@ -197,18 +197,18 @@ map (m : type => type) (M : MONAD m) f mx =
 
 (* Computed Modules *)
 
-(*pickTable (size : int) (threshold : int) (HashMap : MAP) (TreeMap : MAP) =
+pickTable (size : int) (threshold : int) (HashMap : MAP) (TreeMap : MAP) =
 {
   Table = if size > threshold then HashMap else TreeMap : MAP
-};*)
+};
 
-(*(;
 type MONAD =
 {
   type t a;
   return (a : type) : a -> t a;
   bind (a : type) (b : type) : t a -> (a -> t b) -> t b
 };
+
 type MONAD_TRANS =
 {
   include MONAD;
@@ -223,7 +223,7 @@ mapM (M : MONAD) (a : type) (b : type) (f : a -> b) (m : M.t a) : M.t b =
 joinM (M : MONAD) (a : type) (mm : M.t (M.t a)) : M.t a =
   M.bind (M.t a) a mm (fun (m : M.t a) => m);
 
-StackM (M : MONAD) =
+(*StackM (M : MONAD) =
   rec (Loop : (n : int) -> (MONAD_TRANS with (base = M.t))) =>
   fun (n : int) =>
   if n == 1 then
@@ -246,9 +246,9 @@ StackM (M : MONAD) =
             (fun (x : a) => f x));
     }
   ) : MONAD_TRANS with (type base a = M.t a);
-;)
+*)
 
-;; Predicativity
+(* Predicativity *)
 
 type T1 = type;
 type T2 = {type u};
@@ -258,10 +258,10 @@ type T5 = (a : type) => {};
 type T6 = {type u a = bool};
 
 type Ti = T1;
-;; type U = pair Ti Ti;  ;; error
-;; A = (type Ti) : type;  ;; error
-;; B = {type u = Ti} :> {type u};  ;; error
-;; C = if true then Ti else int : type;  ;; error
+(* type U = pair Ti Ti; *) (* error *)
+(* A = (type Ti) : type; *) (* error *)
+(* B = {type u = Ti} :> {type u}; *) (* error *)
+(* C = if true then Ti else int : type; *) (* error *)
 
 type T1' = (= type int);
 type T2' = {type u = int};
@@ -273,19 +273,19 @@ B = {type u = Ti} :> {type u};
 C = if true then Ti else int : type;
 
 
-;; Section 3: Type System and Elaboration
-;; 3.2 Elaboration
+(* Section 3: Type System and Elaboration *)
+(* 3.2 Elaboration *)
 
-;; Subtyping
+(* Subtyping *)
 
 type MONSTER =
   (= (fun (x : {}) => ({type t = int; v = 0} :> {type t; v : t}).v));
-;; Test (X : MONSTER) = X : MONSTER;  ;; error
+(* Test (X : MONSTER) = X : MONSTER; *) (* error *)
 
 
-;; Section 4: Full 1ML
+(* Section 4: Full 1ML *)
 
-SubtypingImplicitsWithTypeMatching =
+(* SubtypingImplicitsWithTypeMatching =
   fun (X : '(a : type) => {type t = a; f : a -> t}) =>
        X : {type t; f : int -> int};
 
@@ -338,23 +338,23 @@ G (x : int) = {M = {type t = int; v = x} :> {type t; v : t}; f = id id};
 C = G 3;
 C' = G 3;
 x = C'.f (C.M.v);
-;; x = C.f (C'.M.v);  ;; but this is an error
+;; x = C.f (C'.M.v);  ;; but this is an error*)
 
 
-;; Appendix C: Impredicativity
+(* Appendix C: Impredicativity *)
 
 type OPT =
 {
   type opt a;
-  none 'a : opt a;
-  some 'a : a -> opt a;
-  caseopt 'a 'b : opt a -> b -> (a -> b) -> b;
+  none a : opt a;
+  some a : a -> opt a;
+  caseopt a b : opt a -> b -> (a -> b) -> b;
 };
+
 Opt :> OPT =
 {
   type opt a = wrap (b : type) => b -> (a -> b) -> b;
-  none 'a = wrap (fun (b : type) (n : b) (s : a -> b) => n) : opt a;
-  some 'a x = wrap (fun (b : type) (n : b) (s : a -> b) => s x) : opt a;
-  caseopt 'a 'b xo = (unwrap xo : opt a) b;
+  none a = wrap (fun (b : type) (n : b) (s : a -> b) => n) : opt a;
+  some a (x: a) = wrap (fun (b : type) (n : b) (s : a -> b) => s x) : opt a;
+  caseopt a b (xo : opt a) = (unwrap xo : opt a) b;
 };
-*)

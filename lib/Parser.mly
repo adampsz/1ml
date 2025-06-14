@@ -92,6 +92,8 @@ typ:
   | "(" x=ident ":" t1=typ ")" "=>" t2=typ %prec P_ARROW { TArrow (x, t1, Pure,   t2) @@ $loc }
   | "(" x=ident ":" t1=typ ")" "->" t2=typ %prec P_ARROW { TArrow (x, t1, Impure, t2) @@ $loc }
 
+  | "wrap" t=typ { TWrapped t @@ $loc }
+
   (* Sugar *)
   | t1=typ "->" t2=typ { TArrow (Ident.fresh () @@ $loc(t1), t1, Impure, t2) @@ $loc }
   | t1=typ "=>" t2=typ { TArrow (Ident.fresh () @@ $loc(t1), t1, Pure,   t2) @@ $loc }
@@ -108,7 +110,6 @@ param_with:
 typ_app:
   | t=typ_atom       { t }
   | t=typ_path       { TExpr t @@ $loc }
-  | "wrap" t=typ_app { TWrapped t @@ $loc }
   | "(" t=typ ")"    { t }
 ;
 
@@ -121,7 +122,7 @@ typ_path_arg:
   | t=typ_atom         { EType t @@ $loc }
   | "(" t=typ_path ")" { t }
 
-  | "(" "wrap" t=typ_app ")"     { EType (TWrapped t @@ $loc) @@ $loc }
+  | "(" "wrap" t=typ ")"     { EType (TWrapped t @@ $loc) @@ $loc }
 ;
 
 typ_path_atom:
@@ -164,6 +165,9 @@ expr_op:
 
   | "if" c=expr "then" e1=expr "else" e2=expr_op ":" t=typ_app { Sugar.expr_cond ~span:$loc c e1 e2 t }
 
+  | "wrap"   e=expr_op ":" t=typ_app { Sugar.expr_wrap   ~span:$loc e t }
+  | "unwrap" e=expr_op ":" t=typ_app { Sugar.expr_unwrap ~span:$loc e t }
+
   | lhs=expr_op op=op("||") rhs=expr_op { Sugar.expr_op ~span:$loc op lhs rhs }
   | lhs=expr_op op=op("&&") rhs=expr_op { Sugar.expr_op ~span:$loc op lhs rhs }
   | lhs=expr_op op=op("<")  rhs=expr_op { Sugar.expr_op ~span:$loc op lhs rhs }
@@ -171,9 +175,6 @@ expr_op:
   | lhs=expr_op op=op("+")  rhs=expr_op { Sugar.expr_op ~span:$loc op lhs rhs }
   | lhs=expr_op op=op("*")  rhs=expr_op { Sugar.expr_op ~span:$loc op lhs rhs }
   | lhs=expr_op op=op("**") rhs=expr_op { Sugar.expr_op ~span:$loc op lhs rhs }
-
-  | "wrap"   e=expr_op ":" t=typ_app { Sugar.expr_wrap   ~span:$loc e t }
-  | "unwrap" e=expr_op ":" t=typ_app { Sugar.expr_unwrap ~span:$loc e t }
 ;
 
 %inline

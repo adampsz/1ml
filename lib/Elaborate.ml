@@ -118,7 +118,7 @@ end = struct
 
   let find_var id env =
     match Ident.Map.find_opt id.data env with
-    | Some t -> t
+    | Some (x, t) -> x, Subst.subst Subst.empty t
     | None -> Error.unbound_variable ?span:id.span id
   ;;
 end
@@ -430,8 +430,8 @@ module Elab = struct
          let eff1, t1, e1 = expr env e1
          and eff2, t2, e2 = expr env e2
          and (TExists (ats, t)) = typ env t in
-         let _, fe1 = Subtype.qsubtype env t1 (TExists ([], t)) Path.Set.empty
-         and _, fe2 = Subtype.qsubtype env t2 (TExists ([], t)) Path.Set.empty in
+         let _, fe1 = Subtype.qsubtype env t1 (TExists (ats, t)) Path.Set.empty
+         and _, fe2 = Subtype.qsubtype env t2 (TExists (ats, t)) Path.Set.empty in
          let eff = if ats = [] then Effect.join eff1 eff2 else Impure in
          let t = TExists (ats, t) in
          let e = ECond (EVar x, fe1 env e1, fe2 env e2) in
