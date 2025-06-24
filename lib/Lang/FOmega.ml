@@ -1,11 +1,9 @@
 open Util
-
-let trace = Tracing.init ~width:5 "fomega"
+open (val Trace.init ~scope:"fomega" ())
+include Common
 
 module Kind = struct
-  include struct
-    type ktyp = private unit
-  end
+  type ktyp = private unit
 
   type _ t =
     | KType : ktyp t
@@ -28,46 +26,46 @@ module Kind = struct
   let equal (x : 'k t) (y : 'k t) : bool = x = y
 end
 
+module TVar : sig
+  type 'k t
+  type ex = Ex : 'k t -> ex
+
+  val id : 'k t -> int
+  val kind : 'k t -> 'k Kind.t
+  val name : 'k t -> string option
+  val fresh : ?name:string -> 'k Kind.t -> 'k t
+  val clone : 'k t -> 'k t
+  val equal : 'k t -> 'k t -> bool
+  val compare : 'k t -> 'k t -> int
+  val hequal : 'k1 t -> 'k2 t -> ('k1, 'k2) eq option
+  val hcompare : 'k1 t -> 'k2 t -> int
+
+  module Map : HMap.S with type 'k key = 'k t
+end = struct
+  module UID = Counter.Make ()
+
+  type 'k t = UID.t * 'k Kind.t * string option
+  type ex = Ex : 'k t -> ex
+
+  let id (x, _, _) = UID.get x
+  let kind (_, k, _) = k
+  let name (_, _, n) = n
+  let fresh ?name k = UID.next (), k, name
+  let clone (_, k, name) = fresh ?name k
+  let hequal (x1, k1, _) (x2, k2, _) = if x1 = x2 then Kind.hequal k1 k2 else None
+  let hcompare (x1, _, _) (x2, _, _) = UID.compare x1 x2
+  let equal (x1, _, _) (x2, _, _) = x1 = x2
+  let compare = hcompare
+
+  module Map = HMap.Make (struct
+      type nonrec 'k t = 'k t
+
+      let hcompare = hcompare
+    end)
+end
+
 module Type = struct
   open Kind
-
-  module TVar : sig
-    type 'k t
-    type ex = Ex : 'k t -> ex
-
-    val id : 'k t -> int
-    val kind : 'k t -> 'k kind
-    val name : 'k t -> string option
-    val fresh : ?name:string -> 'k kind -> 'k t
-    val clone : 'k t -> 'k t
-    val equal : 'k t -> 'k t -> bool
-    val compare : 'k t -> 'k t -> int
-    val hequal : 'k1 t -> 'k2 t -> ('k1, 'k2) eq option
-    val hcompare : 'k1 t -> 'k2 t -> int
-
-    module Map : HMap.S with type 'k key = 'k t
-  end = struct
-    let uid = ref 0
-
-    type 'k t = int * 'k kind * string option
-    type ex = Ex : 'k t -> ex
-
-    let id (x, _, _) = x
-    let kind (_, k, _) = k
-    let name (_, _, n) = n
-    let fresh ?name k = next uid, k, name
-    let clone (_, k, name) = fresh ?name k
-    let hequal (x1, k1, _) (x2, k2, _) = if x1 = x2 then Kind.hequal k1 k2 else None
-    let hcompare (x1, _, _) (x2, _, _) = Int.compare x1 x2
-    let equal (x1, _, _) (x2, _, _) = Int.equal x1 x2
-    let compare = hcompare
-
-    module Map = HMap.Make (struct
-        type nonrec 'k t = 'k t
-
-        let hcompare = hcompare
-      end)
-  end
 
   type 'k tvar = 'k TVar.t
 
@@ -94,9 +92,7 @@ module Type = struct
     | TForall _ -> KType
     | TExists _ -> KType
     | TLam (x, t) -> KArrow (TVar.kind x, kind t)
-    | TApp (t1, _) ->
-      let (KArrow (_, k2)) = kind t1 in
-      k2
+    | TApp (t1, _) -> kind t1 |> fun (KArrow (_, k2)) -> k2
   ;;
 
   let rec is_free : type k. _ -> k typ -> bool =
@@ -221,53 +217,56 @@ module Type = struct
   end
 end
 
+module Var : sig
+  type t
+
+  val fresh : ?name:string -> unit -> t
+  val clone : t -> t
+  val id : t -> int
+  val name : t -> string option
+  val equal : t -> t -> bool
+  val compare : t -> t -> int
+
+  module Map : Map.S with type key = t
+end = struct
+  module UID = Counter.Make ()
+
+  type t = UID.t * string option
+
+  let fresh ?name () = UID.next (), name
+  let clone (_, name) = fresh ?name ()
+  let id (x, _) = UID.get x
+  let name (_, n) = n
+  let equal (x1, _) (x2, _) = x1 = x2
+  let compare (x1, _) (x2, _) = UID.compare x1 x2
+
+  module Map = Map.Make (struct
+      type nonrec t = t
+
+      let compare = compare
+    end)
+end
+
 module Expr = struct
   open Type
-
-  module Var : sig
-    type t
-
-    val fresh : ?name:string -> unit -> t
-    val clone : t -> t
-    val id : t -> int
-    val name : t -> string option
-    val equal : t -> t -> bool
-    val compare : t -> t -> int
-
-    module Map : Map.S with type key = t
-  end = struct
-    type t = int * string option
-
-    let uid = ref 0
-    let fresh ?name () = next uid, name
-    let clone (_, name) = fresh ?name ()
-    let id (x, _) = x
-    let name (_, n) = n
-    let equal (x1, _) (x2, _) = Int.equal x1 x2
-    let compare (x1, _) (x2, _) = Int.compare x1 x2
-
-    module Map = Map.Make (struct
-        type nonrec t = t
-
-        let compare = compare
-      end)
-  end
 
   type var = Var.t
 
   (** e *)
   type expr =
     | EVar of Var.t (** x *)
-    | EConst of Prim.const (** c_b *)
+    | EConst of Const.t (** c_b *)
     | ELam of var * ttyp * expr (** λx:τ. e *)
     | EApp of expr * expr (** e e *)
     | ERecord of (string * expr) list (** { l: e, …, l: e } *)
     | EProj of expr * string (** e.l *)
-    | ETyLam : 'k tvar * expr -> expr (** λα:κ. e *)
+    | ETyLam : 'k tvar * expr -> expr (** λα. e *)
     | ETyApp : expr * 'k typ -> expr (** e τ *)
-    | EPack : 'k typ * expr * 'k tvar * ttyp -> expr (** pack ⟨τ, e⟩ as τ *)
+    | EPack : 'k typ * expr * 'k tvar * ttyp -> expr (** pack ⟨τ, e⟩ as ∃α. τ *)
     | EUnpack : 'k tvar * var * expr * expr -> expr (** unpack ⟨α, x⟩ = e in e *)
-    (* Extensions *)
+    (* Sugar *)
+    | ELetIn of var * expr * expr (** let x = e1 in e2 *)
+    (* Non-standard *)
     | EExternal of string * ttyp
     | ECond of expr * expr * expr
 
@@ -277,7 +276,7 @@ end
 module Value = struct
   (** v *)
   type value =
-    | VPrim of Prim.const
+    | VPrim of Const.t
     | VLam of (value -> value)
     | VExternal of (value -> value)
     | VRecord of (string * value) list
@@ -288,101 +287,153 @@ module Value = struct
 end
 
 module PP = struct
-  open Format
-  open Kind
-  open Type
-  open Expr
-  open Value
-  open PP
+  type prec =
+    | PEComplex
+    | PECond
+    | PEApp
+    | PEProj
+    | PEAtom
+    | PTBinder
+    | PTArrow
+    | PTApp
+    | PTAtom
+    | PKArrow
+    | PKAtom
 
-  let pp_kind ppf =
-    let rec aux : type k. _ -> _ -> k kind -> _ =
-      fun p ppf -> function
-        (* Precedence ∞ *)
-        | KType -> fprintf ppf "∗"
-        (* Precedence 0 *)
-        | KArrow (k1, k2) -> wrap (p > 0) ppf "%a →  %a" (aux 1) k1 (aux 0) k2
+  let rec kind : type k. _ -> k Kind.t -> _ =
+    fun ppf k ->
+    let rec aux : type k. _ -> k Kind.t -> _ =
+      fun ppf -> function
+        | KType -> Format.pp_print_string ppf "*"
+        | KArrow (k1, k2) ->
+          Format.fprintf ppf "%a@;<1 2>→  %a" (Precedence.left kind) k1 aux k2
     in
-    aux 0 ppf
+    let prec = if Kind.hequal k KType <> None then PKAtom else PKArrow in
+    Precedence.wprintf prec Right ppf "@[%a@]" aux k
   ;;
 
-  let pp_tvar ppf x =
+  let tvar ppf x =
     match TVar.name x with
-    | Some n -> fprintf ppf "%s#%d" n (TVar.id x)
-    | None -> fprintf ppf "_#%d" (TVar.id x)
+    | Some n -> Format.fprintf ppf "%s#%d" n (TVar.id x)
+    | None -> Format.fprintf ppf "_#%d" (TVar.id x)
   ;;
 
-  let pp_tvar_param (type k) ppf (x : k TVar.t) =
+  let binder (type k) ppf (x : k TVar.t) =
     match Kind.hequal (TVar.kind x) KType with
-    | Some Equal -> pp_tvar ppf x
-    | None -> fprintf ppf "%a: %a" pp_tvar x pp_kind (TVar.kind x)
+    | Some Equal -> tvar ppf x
+    | None -> Format.fprintf ppf "@[%a:@ %a@]" tvar x kind (TVar.kind x)
   ;;
 
-  let pp_typ ppf =
-    let rec aux : type k. _ -> _ -> k typ -> _ =
-      fun p ppf -> function
-        (* Precedence ∞ *)
-        | TVar x -> pp_tvar ppf x
-        | TPrim p -> Prim.PP.pp_prim ppf p
-        | TRecord ts ->
-          let pp_field ppf (l, t) = fprintf ppf "%s: %a" l (aux 0) t
-          and pp_sep ppf _ = fprintf ppf ", " in
-          fprintf ppf "{ %a }" (pp_print_list ~pp_sep pp_field) ts
-        (* Precedence 1 *)
-        | TApp (t1, t2) -> wrap (p > 1) ppf "%a %a" (aux 1) t1 (aux 2) t2
-        (* Precedence 0 *)
-        | TArrow (t1, t2) -> wrap (p > 0) ppf "%a →  %a" (aux 1) t1 (aux 0) t2
-        | TForall (a, t) -> wrap (p > 0) ppf "∀ %a. %a" pp_tvar_param a (aux 0) t
-        | TExists (a, t) -> wrap (p > 0) ppf "∃ %a. %a" pp_tvar_param a (aux 0) t
-        | TLam (a, t) -> wrap (p > 0) ppf "λ %a. %a" pp_tvar_param a (aux 0) t
-    in
-    aux 0 ppf
+  let rec typ : type k. _ -> k Type.t -> _ =
+    fun ppf -> function
+    | Type.TVar x -> tvar ppf x
+    | Type.TPrim x -> Prim.pp ppf x
+    | Type.TRecord [] -> Format.fprintf ppf "{ }"
+    | Type.TRecord ts ->
+      let pp_list =
+        let typ = Precedence.reset typ in
+        let pp_field ppf (l, t) = Format.fprintf ppf "@[<2>%s:@ %a@]" l typ t
+        and pp_sep ppf _ = Format.fprintf ppf ",@ " in
+        Format.pp_print_list ~pp_sep pp_field
+      in
+      let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
+      Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" pp_list ts br
+    | Type.TApp _ as t ->
+      let rec aux : type k. _ -> k Type.t -> _ =
+        fun ppf -> function
+          | TApp (t1, t2) ->
+            Format.fprintf ppf "%a@;<1 2>%a" aux t1 (Precedence.right typ) t2
+          | t -> Precedence.left typ ppf t
+      in
+      Precedence.wprintf PTApp Left ppf "@[%a@]" aux t
+    | Type.TArrow _ as t ->
+      let rec aux : type k. _ -> k Type.t -> _ =
+        fun ppf -> function
+          | TArrow (t1, t2) ->
+            Format.fprintf ppf "%a@;<1 2>→  %a" (Precedence.left typ) t1 aux t2
+          | t -> Precedence.right typ ppf t
+      in
+      Precedence.wprintf PTArrow Left ppf "@[%a@]" aux t
+    | Type.TForall (x, t) ->
+      let pf = Precedence.wprintf PTBinder Right ppf "@[<2>∀ %a.@ %a@]" in
+      pf binder x (Precedence.right typ) t
+    | Type.TExists (x, t) ->
+      let pf = Precedence.wprintf PTBinder Right ppf "@[<2>∃ %a.@ %a@]" in
+      pf binder x (Precedence.right typ) t
+    | Type.TLam (x, t) ->
+      let pf = Precedence.wprintf PTBinder Right ppf "@[<2>λ %a.@ %a@]" in
+      pf binder x (Precedence.right typ) t
   ;;
 
-  let pp_var ppf x =
+  let var ppf x =
     match Var.name x with
-    | Some n -> fprintf ppf "%s#%d" n (Var.id x)
-    | None -> fprintf ppf "_#%d" (Var.id x)
+    | Some n -> Format.fprintf ppf "%s#%d" n (Var.id x)
+    | None -> Format.fprintf ppf "_#%d" (Var.id x)
   ;;
 
-  let pp_expr ppf =
-    let rec aux p ppf = function
-      (* Precedence ∞ *)
-      | EVar x -> pp_var ppf x
-      | EConst x -> Prim.PP.pp_const ppf x
-      | ERecord es ->
-        let pp_field ppf (l, t) = fprintf ppf "%s = %a" l (aux 0) t
-        and pp_sep ppf _ = fprintf ppf ", " in
-        fprintf ppf "{ %a }" (pp_print_list ~pp_sep pp_field) es
-      | EExternal (n, t) -> fprintf ppf "(external %s: %a)" n pp_typ t
-      (* Precedence 2 *)
-      | EProj (e, l) -> wrap (p > 2) ppf "%a.%s" (aux 2) e l
-      (* Precedence 1 *)
-      | EApp (e1, e2) -> wrap (p > 1) ppf "%a %a" (aux 1) e1 (aux 2) e2
-      | ETyApp (e, t) -> wrap (p > 1) ppf "%a [%a]" (aux 1) e pp_typ t
-      (* Precedence 0 *)
-      | ELam (x, t, e) -> wrap (p > 0) ppf "λ %a: %a. %a" pp_var x pp_typ t (aux 0) e
-      | ETyLam (a, e) -> wrap (p > 0) ppf "λ %a. %a" pp_tvar_param a (aux 0) e
-      | EPack (t, e, a, s) ->
-        let pp = wrap (p > 0) ppf "pack ⟨%a, %a⟩ as ∃ %a. %a" in
-        pp pp_typ t (aux 0) e pp_tvar_param a pp_typ s
-      | EUnpack (a, x, e1, e2) ->
-        let pp = wrap (p > 0) ppf "unpack ⟨%a, %a⟩ = %a in %a" in
-        pp pp_tvar_param a pp_var x (aux 0) e1 (aux 0) e2
-      | ECond (c, e1, e2) ->
-        wrap (p > 0) ppf "if %a then %a else %a" (aux 1) c (aux 1) e1 (aux 1) e2
-    in
-    aux 0 ppf
+  let rec expr ppf = function
+    | Expr.EVar x -> var ppf x
+    | Expr.EConst x -> Const.pp ppf x
+    | Expr.ERecord [] -> Format.fprintf ppf "{ }"
+    | Expr.ERecord es ->
+      let pp_list =
+        let expr = Precedence.reset expr in
+        let pp_field ppf (l, e) = Format.fprintf ppf "@[<2>%s:@ %a@]" l expr e
+        and pp_sep ppf _ = Format.fprintf ppf ",@ " in
+        Format.pp_print_list ~pp_sep pp_field
+      in
+      let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
+      Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" pp_list es br
+    | Expr.EExternal (s, t) ->
+      Format.fprintf ppf "(@[external %s:@ %a@])" s (Precedence.reset typ) t
+    | Expr.EProj _ as e ->
+      let rec aux ppf = function
+        | Expr.EProj (e, l) -> Format.fprintf ppf "%a@;<0 2>.%s" aux e l
+        | e -> expr ppf e
+      in
+      Precedence.wprintf PEProj NonAssoc ppf "@[%a@]" aux e
+    | (Expr.EApp _ | Expr.ETyApp _) as e ->
+      let rec aux ppf = function
+        | Expr.EApp (e1, e2) ->
+          Format.fprintf ppf "%a@;<1 2>%a" aux e1 (Precedence.right expr) e2
+        | Expr.ETyApp (e1, t2) ->
+          Format.fprintf ppf "%a@;<1 2>[%a]" aux e1 (Precedence.reset typ) t2
+        | e -> Precedence.left expr ppf e
+      in
+      Precedence.wprintf PEApp Left ppf "@[%a@]" aux e
+    | Expr.ECond (c, e1, e2) ->
+      let pf = Precedence.wprintf PECond NonAssoc ppf "@[if %a@ then %a@ else %a@]" in
+      pf expr c expr e1 expr e2
+    | Expr.ELam (x, t, e) ->
+      let pf = Precedence.wprintf PEComplex Right ppf "@[<2>λ @[%a:@ %a@].@ %a@]" in
+      pf var x typ t (Precedence.right expr) e
+    | Expr.ETyLam (x, e) ->
+      let pf = Precedence.wprintf PEComplex Right ppf "@[<2>Λ %a.@ %a@]" in
+      pf binder x (Precedence.right expr) e
+    | Expr.EPack (t, e, a, s) ->
+      let pf = Precedence.wprintf PEComplex NonAssoc ppf in
+      let pf = pf "@[<2>pack@ @[%a@]:@ ∃ @[%a@] =@ @[%a@].@;<1 2>@[%a@]@]" in
+      pf expr e binder a typ t typ s
+    | (Expr.EUnpack _ | Expr.ELetIn _) as e ->
+      let rec aux ppf = function
+        | Expr.EUnpack (a, x, e1, e2) ->
+          let pf = Format.fprintf ppf "@[unpack ⟨%a, %a⟩ =@ %a@] in@ %a" in
+          pf binder a var x expr e1 aux e2
+        | Expr.ELetIn (x, e1, e2) ->
+          Format.fprintf ppf "@[<2>let %a =@ %a@] in@ %a" var x expr e1 aux e2
+        | e -> expr ppf e
+      in
+      Precedence.wprintf PEComplex Right ppf "@[%a@]" aux e
   ;;
 
-  let rec pp_value ppf = function
-    | VPrim x -> Prim.PP.pp_const ppf x
-    | VLam _ | VTyLam _ | VExternal _ -> pp_print_string ppf "<fun>"
+  let rec value ppf = function
+    | Value.VPrim x -> Const.pp ppf x
+    | VLam _ | VTyLam _ | VExternal _ -> Format.pp_print_string ppf "<fun>"
     | VRecord vs ->
-      let pp_field ppf (l, v) = fprintf ppf "%s: %a" l pp_value v
-      and pp_sep ppf _ = pp_print_string ppf ", " in
-      fprintf ppf "{ %a }" (pp_print_list ~pp_sep pp_field) vs
-    | VPack v -> fprintf ppf "pack %a" pp_value v
+      let pp_field ppf (l, v) = Format.fprintf ppf "%s: %a" l value v
+      and pp_sep ppf _ = Format.pp_print_string ppf ", " in
+      Format.fprintf ppf "{ %a }" (Format.pp_print_list ~pp_sep pp_field) vs
+    | VPack v -> Format.fprintf ppf "pack %a" value v
   ;;
 end
 
@@ -390,17 +441,19 @@ module Error = struct
   open Diagnostic.Error
 
   let undefined_external_symbol id = error "undefined external symbol `%s'" id
-  let undefined_variable x = error "undefined variable `%a'" PP.pp_var x
+  let undefined_variable x = error "undefined variable `%a'" PP.var x
+  let undefined_type_variable x = error "undefined type variable `%a'" PP.tvar x
 
   let expected_matching_kind k1 k2 =
-    error "expected kind %a, but got %a" PP.pp_kind k1 PP.pp_kind k2
+    error "expected kind %a, but got %a" PP.kind k1 PP.kind k2
   ;;
 
   let expected_matching_type t1 t2 =
-    error "expected %a, but got %a" PP.pp_typ t1 PP.pp_typ t2
+    let err = error "@[expected@;<1 2>@[%a@],@;<1 -2>but got@;<1 2>@[%a@]@;<1 -2>@]" in
+    err PP.typ t1 PP.typ t2
   ;;
 
-  let expected_type what t = error "expected %s, but got %a" what PP.pp_typ t
+  let expected_type what t = error "expected %s, but got %a" what PP.typ t
   let expected_function_type = expected_type "a function type"
   let expected_record_type = expected_type "a record type"
   let expected_existential_type = expected_type "an existential type"
@@ -408,11 +461,11 @@ module Error = struct
   let expected_bool = expected_type "a boolean"
 
   let undefined_record_field ts l =
-    error "undefined field `%s' in record %a" l PP.pp_typ (TRecord ts)
+    error "undefined field `%s' in record %a" l PP.typ (TRecord ts)
   ;;
 
   let variable_escapes_scope a t =
-    error "variable `%a' escapes its scope in type `%a'" PP.pp_tvar a PP.pp_typ t
+    error "variable `%a' escapes its scope in type `%a'" PP.tvar a PP.typ t
   ;;
 end
 
@@ -453,7 +506,7 @@ module Typecheck = struct
     | TVar x ->
       (match Env.find_typ x env with
        | Some x -> TVar x
-       | None -> assert false)
+       | None -> Error.undefined_type_variable x)
     | TPrim p -> TPrim p
     | TRecord ts -> TRecord (List.map (fun (l, t) -> l, freshen env t) ts)
     | TApp (t1, t2) -> TApp (freshen env t1, freshen env t2)
@@ -469,16 +522,17 @@ module Typecheck = struct
       TLam (a, freshen env t)
   ;;
 
-  let rec _infer env = function
+  let rec infer env e =
+    trace
+      (fun m -> m ~header:"infer" "%a" PP.expr e)
+      (fun t m -> m ~header:"infer" ":: %a" PP.typ t)
+    @@ fun _ ->
+    match e with
     | EVar x ->
       (match Env.find_var x env with
        | Some t -> t
        | None -> Error.undefined_variable x)
-    | EConst (ConstUnit _) -> TPrim PrimUnit
-    | EConst (ConstBool _) -> TPrim PrimBool
-    | EConst (ConstInt _) -> TPrim PrimInt
-    | EConst (ConstFloat _) -> TPrim PrimFloat
-    | EConst (ConstString _) -> TPrim PrimString
+    | EConst c -> TPrim (Const.typ c)
     | ELam (x, t, e) ->
       let t = freshen env t in
       let env = Env.add_var x t env in
@@ -510,7 +564,7 @@ module Typecheck = struct
       let a, env' = Env.add_typ a env in
       (match freshen env t, infer env e, freshen env' s with
        | t, t', s when Equiv.equiv t' (Subst.subst_one a t s) -> TExists (a, s)
-       | _, t', s -> Error.expected_matching_type t' s)
+       | _, t', s -> Error.expected_matching_type t' (Subst.subst_one a t s))
     | EUnpack (a, x, e1, e2) ->
       (match infer env e1 with
        | TExists (a', s) ->
@@ -522,22 +576,17 @@ module Typecheck = struct
             if Type.is_free a t then Error.variable_escapes_scope a t else t
           | None -> Error.expected_matching_kind (TVar.kind a) (TVar.kind a'))
        | t -> Error.expected_existential_type t)
+    | ELetIn (x, e1, e2) ->
+      let t1 = infer env e1 in
+      infer (Env.add_var x t1 env) e2
     | EExternal (_, t) -> freshen env t
     | ECond (c, e1, e2) ->
       (match infer env c with
-       | TPrim PrimBool ->
+       | TPrim PBool ->
          (match infer env e1, infer env e2 with
           | t1, t2 when Equiv.equiv t1 t2 -> t1
           | t1, t2 -> Error.expected_matching_type t1 t2)
        | t -> Error.expected_bool t)
-
-  and infer env e =
-    Tracing.trace2 trace "infer" _infer env e
-    @@ fun tr f ->
-    Tracing.printf tr "%a" PP.pp_expr e;
-    let t = f () in
-    Tracing.printf tr ":: %a" PP.pp_typ t;
-    t
   ;;
 end
 
@@ -548,23 +597,25 @@ module Eval = struct
   module Env : sig
     type t
 
-    val init : (string -> value option) -> t
+    val empty : (string -> value option) -> t
     val add_var : var -> value -> t -> t
     val find_var : Var.t -> t -> value
     val find_external : string -> t -> value option
   end = struct
-    type t =
-      { ext : string -> value option
-      ; vars : value Var.Map.t
-      }
+    type t = (string -> value option) * value Var.Map.t
 
-    let init ext = { ext; vars = Var.Map.empty }
-    let add_var x v env = { env with vars = Var.Map.add x v env.vars }
-    let find_var x env = Var.Map.find x env.vars
-    let find_external x env = env.ext x
+    let empty ext = ext, Var.Map.empty
+    let add_var x v (ext, vars) = ext, Var.Map.add x v vars
+    let find_var x (_, vars) = Var.Map.find x vars
+    let find_external x (ext, _) = ext x
   end
 
-  let rec _eval env = function
+  let rec eval env e =
+    trace
+      (fun m -> m ~header:"eval" "%a" PP.expr e)
+      (fun v m -> m ~header:"eval" "= %a" PP.value v)
+    @@ fun _ ->
+    match e with
     | EVar x -> Env.find_var x env
     | EConst p -> VPrim p
     | ELam (x, _, e) -> VLam (fun v -> eval (Env.add_var x v env) e)
@@ -590,22 +641,17 @@ module Eval = struct
       (match eval env e1 with
        | VPack v -> eval (Env.add_var x v env) e2
        | _ -> assert false)
+    | ELetIn (x, e1, e2) ->
+      let v1 = eval env e1 in
+      eval (Env.add_var x v1 env) e2
     | EExternal (id, _) ->
       (match Env.find_external id env with
        | Some v -> v
        | None -> Error.undefined_external_symbol id)
     | ECond (c, e1, e2) ->
       (match eval env c with
-       | VPrim (ConstBool true) -> eval env e1
-       | VPrim (ConstBool false) -> eval env e2
+       | VPrim (CBool true) -> eval env e1
+       | VPrim (CBool false) -> eval env e2
        | _ -> assert false)
-
-  and eval env e =
-    Tracing.trace2 trace "eval" _eval env e
-    @@ fun tr f ->
-    Tracing.printf tr "%a" PP.pp_expr e;
-    let v = f () in
-    Tracing.printf tr "= %a" PP.pp_value v;
-    v
   ;;
 end

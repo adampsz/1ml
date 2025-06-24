@@ -1,37 +1,37 @@
-open OneMl.FOmega
-open OneMl.FOmega.Value
+open Lang.FOmega
+open Lang.FOmega.Value
 
 let panic = function
-  | VPrim (ConstString s) -> failwith (Printf.sprintf "Program panicked: %s" s)
+  | VPrim (CString s) -> failwith (Printf.sprintf "Program panicked: %s" s)
   | _ -> failwith "Program panicked: unknown error"
 ;;
 
 let print = function
-  | VPrim (ConstString x) -> VPrim (ConstUnit (Format.printf "%s\n%!" x))
-  | x -> VPrim (ConstUnit (Format.printf "%a\n%!" PP.pp_value x))
+  | VPrim (CString x) -> VPrim (CUnit (Format.printf "%s\n%!" x))
+  | x -> VPrim (CUnit (Format.printf "%a\n%!" PP.value x))
 ;;
 
 let add x y =
   match x, y with
-  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x + y))
+  | VPrim (CInt x), VPrim (CInt y) -> VPrim (CInt (x + y))
   | _ -> assert false
 ;;
 
 let sub x y =
   match x, y with
-  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x - y))
+  | VPrim (CInt x), VPrim (CInt y) -> VPrim (CInt (x - y))
   | _ -> assert false
 ;;
 
 let mul x y =
   match x, y with
-  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x * y))
+  | VPrim (CInt x), VPrim (CInt y) -> VPrim (CInt (x * y))
   | _ -> assert false
 ;;
 
 let div x y =
   match x, y with
-  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x / y))
+  | VPrim (CInt x), VPrim (CInt y) -> VPrim (CInt (x / y))
   | _ -> assert false
 ;;
 
@@ -51,12 +51,12 @@ let builtin =
 let run parse lexbuf =
   let aux expr =
     let typ = Typecheck.infer Typecheck.Env.empty expr
-    and value = Eval.eval (Eval.Env.init builtin) expr in
-    Format.printf "%a :: %a\n%!" PP.pp_value value PP.pp_typ typ
+    and value = Eval.eval (Eval.Env.empty builtin) expr in
+    Format.printf "%a :: %a@." PP.value value PP.typ typ
   in
   try parse Lexer.token lexbuf |> List.iter aux with
-  | OneMl.Diagnostic.Error.Error diag ->
-    Format.eprintf "%a\n%!" (OneMl.Diagnostic.pp ?read:None) diag
+  | Util.Diagnostic.Error.Error diag ->
+    Format.eprintf "%a\n%!" (Util.Diagnostic.pp ?read:None) diag
 ;;
 
 let rec repl () =

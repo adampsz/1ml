@@ -1,20 +1,20 @@
 {
+  open Util
   open Parser
 
   let token_of_id = function
+    | "_"        -> P_UNDER
     | "and"      -> KW_AND
+    | "do"       -> KW_DO
     | "else"     -> KW_ELSE
     | "external" -> KW_EXTERNAL
-    | "false"    -> KW_FALSE
     | "fun"      -> KW_FUN
     | "if"       -> KW_IF
     | "in"       -> KW_IN
     | "include"  -> KW_INCLUDE
     | "let"      -> KW_LET
-    | "local"    -> KW_LOCAL
     | "open"     -> KW_OPEN
     | "then"     -> KW_THEN
-    | "true"     -> KW_TRUE
     | "type"     -> KW_TYPE
     | "unwrap"   -> KW_UNWRAP
     | "with"     -> KW_WITH
@@ -28,8 +28,8 @@
     | "="  -> P_EQUAL
     | "&&" -> P_OP_AND "&&"
     | "||" -> P_OP_OR "||"
-    | op -> (match String.get op 0 with
-      | '*' when String.length op >= 2 && String.get op 1 = '*' -> P_OP_POW op
+    | op when String.starts_with ~prefix:"**" op -> P_OP_POW op
+    | op -> (match op.[0] with
       | '*' | '/' | '%' -> P_OP_MUL op
       | '+' | '-'       -> P_OP_ADD op
       | '@' | '^'       -> P_OP_CONCAT op
@@ -38,32 +38,42 @@
       | _   -> assert false)
   ;;
 
-  let add_escape buf esc = match String.get esc 1 with
+  let add_escape buf esc = match esc.[1] with
     | '0' -> Buffer.add_char buf '\000'
     | _   -> Buffer.add_string buf (Scanf.unescaped esc)
   ;;
 
+  let new_lines lexbuf =
+    let rec aux i =
+      if Bytes.get lexbuf.Lexing.lex_buffer i = '\010' then Lexing.new_line lexbuf;
+      if i + 1 < lexbuf.lex_curr_pos then aux (i + 1)
+    in
+    aux lexbuf.lex_start_pos
+  ;;
 
   module Error = struct
-    open Diagnostic.Error
+    exception Error
 
-    let span = function
-      | Some lexbuf -> Some (Lexing.lexeme_start_p lexbuf, Lexing.lexeme_end_p lexbuf)
-      | None -> None
+    let error ?lexbuf =
+      let span = match lexbuf with
+        | Some lexbuf -> Some (Lexing.lexeme_start_p lexbuf, Lexing.lexeme_end_p lexbuf)
+        | None -> None
+      in
+      Diagnostic.Error.error ?span ~inner:Error
     ;;
 
-    let unexpected_char ?lexbuf c = error ?span:(span lexbuf) "unexpected char %C" c
-    let invalid_escape ?lexbuf c = error ?span:(span lexbuf) "invalid escape sequence %C" c
-    let unterminated_string ?lexbuf = error ?span:(span lexbuf) "unterminated string"
-    let unterminated_comment ?lexbuf = error ?span:(span lexbuf) "unterminated comment"
+    let unexpected_char ?lexbuf c = error ?lexbuf "unexpected char %C" c
+    let invalid_escape ?lexbuf c = error ?lexbuf "invalid escape sequence %C" c
+    let unterminated_string ?lexbuf = error ?lexbuf "unterminated string"
+    let unterminated_comment ?lexbuf = error ?lexbuf "unterminated comment"
   end
 }
 
 let newline = ('\013'* '\010')
 let blank = [' ' '\009' '\012']
 
-let ident_start = ['A'-'Z' 'a'-'z' '_' '\'' '\192'-'\214' '\216'-'\246' '\248'-'\255']
-let ident_continue = ident_start | ['0'-'9']
+let ident_start = ['A'-'Z' 'a'-'z' '_' '\192'-'\214' '\216'-'\246' '\248'-'\255']
+let ident_continue = ident_start | ['0'-'9'] | '\''
 let ident = ident_start ident_continue*
 
 let operator_start = ['$' '&' '*' '+' '-' '/' '=' '>' '@' '^' '|' '%' '<']
@@ -83,7 +93,11 @@ rule token = parse
   | eof     { EOF }
   | newline { Lexing.new_line lexbuf; token lexbuf }
   | blank+  { token lexbuf }
+
   | "(*"    { comment lexbuf; token lexbuf }
+
+  (* Hack: allow [L_PAREN; P_OP_MUL("*"); R_PAREN] token sequence, and do not treat it as a comment start *)
+  | "(*" (blank | newline)* ")" { lexbuf.lex_curr_pos <- lexbuf.lex_start_pos + 1; P_PAREN_L }
 
   | "{"  { P_BRACE_L }
   | "}"  { P_BRACE_R }
@@ -94,6 +108,7 @@ rule token = parse
   | ")"  { P_PAREN_R }
   | ":>" { P_SEAL }
   | ";"  { P_SEMI }
+  | "'"  { P_TICK }
 
   | operator as op { token_of_op op }
   | ident    as id { token_of_id id }
@@ -106,10 +121,14 @@ rule token = parse
 
   | digit (digit | '_')* ('.' (digit | '_')*)? (['e' 'E'] ['+' '-']? digit (digit | '_')*)? { FLOAT (Lexing.lexeme lexbuf |> float_of_string) }
 
-  | '"' { STRING (string (Buffer.create 64) lexbuf) }
+  | "'" ("'" | newline)   { lexbuf.lex_start_pos <- lexbuf.lex_start_pos + 1; Error.unexpected_char ~lexbuf '\'' }
+  | "'" "\\0"         "'" { CHAR '\000' }
+  | "'" (escape as e) "'" { CHAR ((Scanf.unescaped e).[0]) }
+  | "'" (_ as c)      "'" { CHAR c }
+
+  | '"'  { STRING (string (Buffer.create 64) lexbuf) }
 
   | _ as c { Error.unexpected_char ~lexbuf c }
-
 
 and string buf = parse
   | '"'     { Buffer.contents buf }
@@ -126,5 +145,7 @@ and comment = parse
   | "*)"    { }
   | newline { Lexing.new_line lexbuf; comment lexbuf }
   | _       { comment lexbuf }
+
+  | '(' (blank | newline)* '*' (blank | newline)* ')' { new_lines lexbuf; comment lexbuf }
 
   | eof  { Error.unterminated_comment ~lexbuf }

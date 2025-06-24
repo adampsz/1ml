@@ -1,10 +1,10 @@
-let print: forall a. a -> unit = (external print: forall a. a -> unit) in
-let add: int -> int -> int = (external add: int -> int -> int) in
-let sub: int -> int -> int = (external sub: int -> int -> int) in
+let print = (external print: forall a. a -> unit) in
+let add = (external add: int -> int -> int) in
+let sub = (external sub: int -> int -> int) in
 
-let _: unit = print [string] "\n0. Hello\n" in
+let _ = print [string] "\n0. Hello\n" in
 
-let _: unit = print [int] (add 5 (sub 6 2)) in
+let _ = print [int] (add 5 (sub 6 2)) in
 
 (lambda [a], x: a, y: a. y) [int] 1 2 ;;
 
@@ -12,9 +12,9 @@ let _: unit = print [int] (add 5 (sub 6 2)) in
   Pairs (Record encoding)
 \*************************/
 
-let print: forall a. a -> unit = (external print: forall a. a -> unit) in
+let print = (external print: forall a. a -> unit) in
 
-let _: unit = print [string] "\n1. Pairs (Record encoding)\n" in
+let _ = print [string] "\n1. Pairs (Record encoding)\n" in
 
 unpack pair: * -> * -> *, pair = pack lambda l, r. { l: l, r: r }, {
   cons = lambda [l], [r], l: l, r: r. { l = l, r = r },
@@ -26,10 +26,10 @@ unpack pair: * -> * -> *, pair = pack lambda l, r. { l: l, r: r }, {
   snd:  forall l, r. pair l r -> r,
 } in
 
-let p: pair int bool = pair.cons [int] [bool] 6 true in
+let p = pair.cons [int] [bool] 6 true in
 
-let _: unit = print [int]  (pair.fst [int] [bool] p) in
-let _: unit = print [bool] (pair.snd [int] [bool] p) in
+let _ = print [int]  (pair.fst [int] [bool] p) in
+let _ = print [bool] (pair.snd [int] [bool] p) in
 
 () ;;
 
@@ -37,9 +37,9 @@ let _: unit = print [bool] (pair.snd [int] [bool] p) in
   Pairs (Church encoding)
 \*************************/
 
-let print: forall a. a -> unit = (external print: forall a. a -> unit) in
+let print = (external print: forall a. a -> unit) in
 
-let _: unit = print [string] "\n2. Pairs (Church encoding)\n" in
+let _ = print [string] "\n2. Pairs (Church encoding)\n" in
 
 unpack pair: * -> * -> *, pair = pack lambda l, r. forall z. (l -> r -> z) -> z, {
   cons = lambda [l], [r], l: l, r: r, [z], z: l -> r -> z. z l r,
@@ -51,12 +51,12 @@ unpack pair: * -> * -> *, pair = pack lambda l, r. forall z. (l -> r -> z) -> z,
   snd:  forall l, r. pair l r -> r,
 } in
 
-let p: pair int bool = pair.cons [int] [bool] 6 true in
+let p = pair.cons [int] [bool] 6 true in
 
-let _: unit = print [int]  (pair.fst [int] [bool] p) in
-let _: unit = print [bool] (pair.snd [int] [bool] p) in
+let _ = print [int]  (pair.fst [int] [bool] p) in
+let _ = print [bool] (pair.snd [int] [bool] p) in
 
-// let _: unit = pair.cons [pair int bool] [unit] p () in
+// let _ = pair.cons [pair int bool] [unit] p () in
 
 () ;;
 
@@ -64,12 +64,12 @@ let _: unit = print [bool] (pair.snd [int] [bool] p) in
   Lists (right fold encoding)
 \*****************************/
 
-let panic: forall a. string -> a = (external panic: forall a. string -> a) in
-let print: forall a. a -> unit = (external print: forall a. a -> unit) in
-let add: int -> int -> int = (external add: int -> int -> int) in
-let sub: int -> int -> int = (external sub: int -> int -> int) in
+let panic = (external panic: forall a. string -> a) in
+let print = (external print: forall a. a -> unit) in
+let add = (external add: int -> int -> int) in
+let sub = (external sub: int -> int -> int) in
 
-let _: unit = print [string] "\n3. Lists (right fold encoding)\n" in
+let _ = print [string] "\n3. Lists (right fold encoding)\n" in
 
 unpack list: * -> *, list = pack lambda a. forall r. (a -> r -> r) -> r -> r, {
   nil   = lambda [a], [r], c: a -> r -> r, n: r. n,
@@ -89,31 +89,31 @@ unpack list: * -> *, list = pack lambda a. forall r. (a -> r -> r) -> r -> r, {
   map:   forall a, b. (a -> b) -> list a -> list b,
 } in
 
-let append: forall a. list a -> list a -> list a = lambda [a], xs: list a, ys: list a. list.foldr [a] [list a] (list.cons [a]) ys xs in
+let append = lambda [a], xs: list a, ys: list a. list.foldr [a] [list a] (list.cons [a]) ys xs in
 
-let xs: list int = list.cons [int] 4 (list.cons [int] 5 (list.cons [int] 6 (list.nil [int]))) in
-let ys: list int = list.map [int] [int] (add 3) xs in
+let xs = list.cons [int] 4 (list.cons [int] 5 (list.cons [int] 6 (list.nil [int]))) in
+let ys = list.map [int] [int] (add 3) xs in
 
-let _: unit = print [string] " - Basics" in
-let _: unit = print [int] (list.foldr [int] [int] add 0 xs) in
-let _: unit = print [int] (list.head [int] xs) in
-let _: unit = print [bool] (list.isnil [int] xs) in
-let _: unit = print [bool] (list.isnil [int] (list.nil [int])) in
+let _ = print [string] " - Basics" in
+let _ = print [int] (list.foldr [int] [int] add 0 xs) in
+let _ = print [int] (list.head [int] xs) in
+let _ = print [bool] (list.isnil [int] xs) in
+let _ = print [bool] (list.isnil [int] (list.nil [int])) in
 
-let _: unit = print [string] " - Mapped" in
-let _: unit = print [int] (list.foldr [int] [int] add 0 ys) in
+let _ = print [string] " - Mapped" in
+let _ = print [int] (list.foldr [int] [int] add 0 ys) in
 
-let _: unit = print [int] (list.head [int] ys) in
-let _: unit = print [int] (list.head [int] (list.tail [int] ys)) in
-let _: unit = print [int] (list.head [int] (list.tail [int] (list.tail [int] ys))) in
+let _ = print [int] (list.head [int] ys) in
+let _ = print [int] (list.head [int] (list.tail [int] ys)) in
+let _ = print [int] (list.head [int] (list.tail [int] (list.tail [int] ys))) in
 
-let _: unit = print [string] " - Append" in
-let _: unit = list.foldr [int] [unit] (lambda x: int, _: unit. print [int] x) () (append [int] xs ys) in
+let _ = print [string] " - Append" in
+let _ = list.foldr [int] [unit] (lambda x: int, _: unit. print [int] x) () (append [int] xs ys) in
 
-let _: unit = print [string] " - Nested" in
+let _ = print [string] " - Nested" in
 
-let xxs: list (list int) = list.map [int] [list int] (lambda x: int. list.cons [int] x (list.cons [int] (sub x 3) (list.nil [int]))) xs in
-let _: unit = list.foldr [list int] [unit] (lambda xs: list int, _: unit. print [int] (list.head [int] (list.tail [int] xs))) () xxs in
+let xxs = list.map [int] [list int] (lambda x: int. list.cons [int] x (list.cons [int] (sub x 3) (list.nil [int]))) xs in
+let _ = list.foldr [list int] [unit] (lambda xs: list int, _: unit. print [int] (list.head [int] (list.tail [int] xs))) () xxs in
 
 () ;;
 
@@ -121,16 +121,15 @@ let _: unit = list.foldr [list int] [unit] (lambda xs: list int, _: unit. print 
   Church numerals
 \******************/
 
-let print: forall a. a -> unit = (external print: forall a. a -> unit) in
-let add: int -> int -> int = (external add: int -> int -> int) in
-let mul: int -> int -> int = (external mul: int -> int -> int) in
+let print = (external print: forall a. a -> unit) in
+let add = (external add: int -> int -> int) in
+let mul = (external mul: int -> int -> int) in
 
-let _: unit = print [string] "\n4. Church numerals\n" in
+let _ = print [string] "\n4. Church numerals\n" in
 
 unpack num, num = pack forall a. (a -> a) -> a -> a, (
-  let p: (forall a. (a -> a) -> a -> a) -> (forall a. (a -> a) -> a -> a)
-       = lambda n: (forall a. (a -> a) -> a -> a), [a], s: a -> a, z: a.
-         n [(a -> a) -> a] (lambda g: (a -> a) -> a, h: a -> a. h (g s)) (lambda u: (a -> a). z) (lambda u: a. u) in
+  let p = lambda n: (forall a. (a -> a) -> a -> a), [a], s: a -> a, z: a.
+          n [(a -> a) -> a] (lambda g: (a -> a) -> a, h: a -> a. h (g s)) (lambda u: (a -> a). z) (lambda u: a. u) in
   {
     z = lambda [a], s: a -> a, z: a. z,
     s = lambda n: (forall a. (a -> a) -> a -> a), [a], s: a -> a, z: a. s (n [a] s z),
@@ -152,19 +151,19 @@ unpack num, num = pack forall a. (a -> a) -> a -> a, (
   pow: num -> num -> num,
 } in
 
-let _0: num = num.z in
-let _1: num = num.s _0 in
-let _2: num = num.s _1 in
-let _3: num = num.s _2 in
-let _4: num = num.s _3 in
+let _0 = num.z in
+let _1 = num.s _0 in
+let _2 = num.s _1 in
+let _3 = num.s _2 in
+let _4 = num.s _3 in
 
-let _: unit = print [int] (num.val _4) in
-let _: unit = print [int] (num.val (num.add _3 _4)) in
-let _: unit = print [int] (num.val (num.mul _3 _4)) in
-let _: unit = print [int] (num.val (num.pow _3 _4)) in
-let _: unit = print [int] (num.val (num.sub _4 _3)) in
+let _ = print [int] (num.val _4) in
+let _ = print [int] (num.val (num.add _3 _4)) in
+let _ = print [int] (num.val (num.mul _3 _4)) in
+let _ = print [int] (num.val (num.pow _3 _4)) in
+let _ = print [int] (num.val (num.sub _4 _3)) in
 
 // 4 ^ 3 - ((2 * 3) + 4) = 64 - (6 + 4) = 64 - 10 = 54
-let _: unit = print [int] (num.val (num.sub (num.pow _4 _3) (num.add (num.mul _2 _3) _4))) in
+let _ = print [int] (num.val (num.sub (num.pow _4 _3) (num.add (num.mul _2 _3) _4))) in
 
 () ;;

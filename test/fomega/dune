@@ -1,6 +1,6 @@
 (executable
  (name FOmega)
- (libraries OneMl))
+ (libraries Lang))
 
 (ocamllex Lexer)
 
