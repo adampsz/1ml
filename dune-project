@@ -6,7 +6,7 @@
  (license MIT)
  (source
   (github adampsz/1ml))
- (depends fmt logs))
+ (depends logs))
 
 (using menhir 3.0)
 

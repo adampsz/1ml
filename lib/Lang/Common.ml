@@ -8,6 +8,7 @@ module Node : sig
   val make : ?span:span -> 'a -> 'a node
   val span : _ node -> span option
   val data : 'a node -> 'a
+  val map : ('a -> 'b) -> 'a node -> 'b node
 end = struct
   module UID = Counter.Make ()
 
@@ -18,6 +19,7 @@ end = struct
   let make ?span data = UID.next (), data, span
   let data (_, data, _) = data
   let span (_, _, span) = span
+  let map f (_, data, span) = make ?span (f data)
 end
 
 module Prim = struct

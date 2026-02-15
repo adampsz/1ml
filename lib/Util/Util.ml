@@ -212,6 +212,22 @@ module Format = struct
   include Format
 
   let sink = make_formatter (fun _ _ _ -> ()) (fun _ -> ())
+
+  let with_margin margin pp ppf x =
+    let g = Format.pp_get_geometry ppf () in
+    let max_indent = min g.max_indent (margin - 1) in
+    Format.pp_set_geometry ppf ~margin ~max_indent;
+    Fun.protect
+      ~finally:(fun () ->
+        Format.pp_set_geometry ppf ~margin:g.margin ~max_indent:g.max_indent)
+      (fun () -> pp ppf x)
+  ;;
+
+  let with_max_boxes boxes pp ppf x =
+    let b = Format.pp_get_max_boxes ppf () in
+    Format.pp_set_max_boxes ppf boxes;
+    Fun.protect ~finally:(fun () -> Format.pp_set_max_boxes ppf b) (fun () -> pp ppf x)
+  ;;
 end
 
 module PP = struct
@@ -239,10 +255,10 @@ module Precedence : sig
     -> ('a, Format.formatter, unit) format
     -> 'a
 
-  val reset : 'a Fmt.t -> 'a Fmt.t
-  val left : 'a Fmt.t -> 'a Fmt.t
-  val right : 'a Fmt.t -> 'a Fmt.t
-  val middle : 'a Fmt.t -> 'a Fmt.t
+  val reset : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> unit
+  val left : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> unit
+  val right : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> unit
+  val middle : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> unit
 end = struct
   type position =
     | PosLeft
@@ -357,7 +373,7 @@ end = struct
     | Leave
 
   let src = Logs.Src.create "trace"
-  let scope_tag = Logs.Tag.def "scope" Fmt.nop
+  let scope_tag = Logs.Tag.def "scope" (fun _ _ -> ())
 
   module Reporter (S : sig
       val file : string -> Format.formatter
@@ -391,7 +407,7 @@ end = struct
         Format.pp_set_ellipsis_text ppf "...";
         Format.pp_set_margin ppf (Format.pp_infinity - 1);
         Format.pp_set_max_indent ppf (Format.pp_infinity - 2);
-        Format.pp_set_max_boxes ppf 6;
+        Format.pp_set_max_boxes ppf 20;
         ppf, indent
     ;;
 

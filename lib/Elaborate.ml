@@ -178,7 +178,7 @@ module Sugar = struct
 
   module Expr = struct
     let pack a tc s e =
-      let aux (Ex a : Ex.tvar) (Ex t : Ex.typ) rest s =
+      let aux rest (Ex a : Ex.tvar) (Ex t : Ex.typ) s =
         match T.Kind.hequal (T.TVar.kind a) (T.Type.kind t) with
         | Some Equal ->
           let b, e = rest (T.Type.Subst.subst_one a t s) in
@@ -186,7 +186,7 @@ module Sugar = struct
           (Ex a : Ex.tvar) :: b, T.Expr.EPack (t, e, a, s)
         | _ -> assert false
       in
-      let _, e = Flat.fold_right2 aux a tc (Fun.const ([], e)) s in
+      let _, e = Flat.fold_left2 aux (Fun.const ([], e)) a tc s in
       e
     ;;
 
@@ -415,10 +415,6 @@ module Coerce = struct
   open Ex
 
   let rec coerce e env c =
-    trace
-      (fun m -> m ~header:"coerce" "%a ⟨%a⟩" T.PP.expr e S.PP.coercion c)
-      (fun e m -> m ~header:"coerce" "~> %a" T.PP.expr e)
-    @@ fun () ->
     match c with
     | S.Coercion.CRefl -> e
     | S.Coercion.CSingleton t -> Sugar.Expr.singleton (Type.modu env t)
@@ -428,9 +424,9 @@ module Coerce = struct
       let aux (x, c) = name x, coerce (T.Expr.EProj (EVar tmp, name x)) env c in
       let e2 = T.Expr.ERecord (List.map aux xs) in
       T.Expr.ELetIn (tmp, e, e2)
-    | S.Coercion.CArrow (CMod (tc1, c1, TMod (a1, k1, t1)), (eff', eff), c2) ->
+    | S.Coercion.CArrow (TMod (a1, k1, t1), eff, (tc, c1, c2, eff')) ->
       let (env, a1), tmp = Env.add_tvar a1 k1 env, T.Var.fresh () in
-      let e = Flat.fold_left Sugar.Expr.ty_app e (Type.cons env tc1) in
+      let e = Flat.fold_left Sugar.Expr.ty_app e (Type.cons env tc) in
       let e = Sugar.Expr.eff_app e (Explicit eff') (coerce (T.Expr.EVar tmp) env c1) in
       let e = modu e env c2 in
       let e = Sugar.Expr.eff_lam tmp (Type.typ env t1) (Explicit eff) e in
@@ -438,11 +434,12 @@ module Coerce = struct
     | S.Coercion.CGeneralize (g, c) -> Implicit.generalize (coerce e) c env g
     | S.Coercion.CInstantiate (c, tc) -> coerce (Implicit.instantiate e env tc) env c
 
-  and modu e env (S.Coercion.CMod (tc, c, TMod (a, k, t))) =
-    let (env, a), tmp = Env.add_tvar a k env, T.Var.fresh () in
+  and modu e env (S.Coercion.CMod ((a', tc), c, TMod (a, k, t))) =
+    let (env, a'), tmp = Env.add_tvar a' (S.Type.Cons.kind tc) env, T.Var.fresh () in
+    let a = Flatten.tvar k in
     let e2 = coerce (T.Expr.EVar tmp) env c in
     let e2 = Sugar.Expr.pack a (Type.cons env tc) (Type.typ env t) e2 in
-    Sugar.Expr.unpack a tmp e e2
+    Sugar.Expr.unpack a' tmp e e2
   ;;
 end
 
@@ -533,7 +530,18 @@ module Elab = struct
       env, [ x, Env.module_tvars env', e ]
   ;;
 
-  let file env node = modu env node
+  let file env node =
+    trace
+      (fun m ->
+         let expr = Format.with_margin 140 S.PP.expr_modu in
+         let expr = Format.with_max_boxes Int.max_int expr in
+         m ~header:"file" "%a" expr node)
+      (fun t m ->
+         let expr = Format.with_margin 140 T.PP.expr in
+         let expr = Format.with_max_boxes Int.max_int expr in
+         m ~header:"file" "%a" expr t)
+    @@ fun () -> modu env node
+  ;;
 end
 
 open Format

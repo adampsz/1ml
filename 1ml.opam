@@ -6,7 +6,6 @@ homepage: "https://github.com/adampsz/1ml"
 bug-reports: "https://github.com/adampsz/1ml/issues"
 depends: [
   "dune" {>= "3.17"}
-  "fmt"
   "logs"
   "odoc" {with-doc}
 ]

@@ -4,7 +4,9 @@ type mode =
 
 let inputs = ref []
 and repl = ref false
-and trace_dir = ref None
+and fomega = ref false
+and prelude = ref None
+and trace = ref None
 and color = ref None
 
 let get_usage () =
@@ -15,7 +17,6 @@ let get_usage () =
 let get_help msg =
   let f = function
     | line when String.ends_with ~suffix:"[HIDDEN]" line -> None
-    | line when String.ends_with ~suffix:"[INTERNAL]" line -> None
     | line when String.starts_with ~prefix:"  -help" line -> None
     | line -> Some line
   in
@@ -41,7 +42,9 @@ let show_version () =
 
 let spec =
   [ "--repl", Arg.Set repl, "\tStart interactive repl"
-  ; "--trace-dir", set_string_opt trace_dir, "\t[INTERNAL]"
+  ; "--prelude", set_string_opt prelude, "\tConfigure prelude file/directory"
+  ; "--trace", set_string_opt trace, "\tGenerate tracing artifacts in given directory"
+  ; "--f-omega", Arg.Set fomega, "\tElaborate to F-omega and then evaluate"
   ; "--color", set_color color, "\tColorize output (always, never, auto)"
   ; "--version", Arg.Unit show_version, "\tDisplay version information"
   ; "-", Arg.Unit (fun () -> inputs := "-" :: !inputs), "\t[HIDDEN]"
@@ -68,7 +71,9 @@ let mode =
   | files, false -> Run (List.rev files)
 ;;
 
-let trace_dir = !trace_dir
+let fomega = !fomega
+let prelude = !prelude
+let trace = !trace
 
 let color =
   match !color with

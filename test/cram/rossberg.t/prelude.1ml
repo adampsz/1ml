@@ -20,8 +20,8 @@ Bool =
 {
   type bool = external "bool";
   type t = bool;
-  true = external "true" : bool;
-  false = external "false" : bool;
+  true = external "Bool.true" : bool;
+  false = external "Bool.false" : bool;
   not b = if b then false else true;
   print = external "Bool.print" : bool -> ();
 };
@@ -30,7 +30,7 @@ true = Bool.true;
 false = Bool.false;
 not = Bool.not;
 
-(==) 'a (x: a) (y: a) = (external "==" : 'a => a -> a -> bool) x y;
+(==) 'a (x: a) (y: a) = (external "==" : (a: type) => a -> a -> bool) a x y;
 (<>) 'a (x: a) (y: a) = not (x == y);
 
 
@@ -87,8 +87,8 @@ Text =
   (>) = external "Text.>" : text -> text -> bool;
   (<=) = external "Text.<=" : text -> text -> bool;
   (>=) = external "Text.>=" : text -> text -> bool;
-  length t = external "Text.length" : text -> int;
-  sub t i = (external "Text.sub" : (int, int) -> text -> text) (t, i);
+  lenght = external "Text.length" : text -> int;
+  sub = external "Text.sub" : int -> int -> text -> text;
   fromChar = external "Text.fromChar" : char -> text;
   print = external "Text.print" : text -> ();
 };

@@ -2,45 +2,46 @@ open Lang.FOmega
 open Lang.FOmega.Value
 
 let panic = function
-  | VPrim (CString s) -> failwith (Printf.sprintf "Program panicked: %s" s)
+  | VConst (CString s) -> failwith (Printf.sprintf "Program panicked: %s" s)
   | _ -> failwith "Program panicked: unknown error"
 ;;
 
 let print = function
-  | VPrim (CString x) -> VPrim (CUnit (Format.printf "%s\n%!" x))
-  | x -> VPrim (CUnit (Format.printf "%a\n%!" PP.value x))
+  | VConst (CString x) -> VConst (CUnit (Format.printf "%s\n%!" x))
+  | x -> VConst (CUnit (Format.printf "%a\n%!" PP.value x))
 ;;
 
 let add x y =
   match x, y with
-  | VPrim (CInt x), VPrim (CInt y) -> VPrim (CInt (x + y))
+  | VConst (CInt x), VConst (CInt y) -> VConst (CInt (x + y))
   | _ -> assert false
 ;;
 
 let sub x y =
   match x, y with
-  | VPrim (CInt x), VPrim (CInt y) -> VPrim (CInt (x - y))
+  | VConst (CInt x), VConst (CInt y) -> VConst (CInt (x - y))
   | _ -> assert false
 ;;
 
 let mul x y =
   match x, y with
-  | VPrim (CInt x), VPrim (CInt y) -> VPrim (CInt (x * y))
+  | VConst (CInt x), VConst (CInt y) -> VConst (CInt (x * y))
   | _ -> assert false
 ;;
 
 let div x y =
   match x, y with
-  | VPrim (CInt x), VPrim (CInt y) -> VPrim (CInt (x / y))
+  | VConst (CInt x), VConst (CInt y) -> VConst (CInt (x / y))
   | _ -> assert false
 ;;
 
 let builtin =
-  let unary f = VExternal f
-  and binary f = VExternal (fun x -> VExternal (f x)) in
+  let unary f = VLam f
+  and binary f = VLam (fun x -> VLam (f x))
+  and typ f = VTyLam (fun _ -> f) in
   function
   | "panic" -> Some (unary panic)
-  | "print" -> Some (unary print)
+  | "print" -> Some (typ (unary print))
   | "add" -> Some (binary add)
   | "sub" -> Some (binary sub)
   | "mul" -> Some (binary mul)
@@ -51,7 +52,7 @@ let builtin =
 let run parse lexbuf =
   let aux expr =
     let typ = Typecheck.infer Typecheck.Env.empty expr
-    and value = Eval.eval (Eval.Env.empty builtin) expr in
+    and value = Eval.eval (Eval.Env.init builtin) expr in
     Format.printf "%a :: %a@." PP.value value PP.typ typ
   in
   try parse Lexer.token lexbuf |> List.iter aux with

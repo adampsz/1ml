@@ -73,7 +73,7 @@
 %%
 
 file:
-  | bs=punctuated_list(";"+, bind) EOF { (EStruct (List.concat bs) @@ $loc) @@ $loc }
+  | bs=punctuated_list(";"+, bind) EOF { List.concat bs @@ $loc }
 ;
 
 (* Types *)

@@ -57,7 +57,7 @@ and bind_data =
   | BIncl of vis * expr
 
 type file = file_data Node.t
-and file_data = expr
+and file_data = bind list
 
 module PP = struct
   open Format

@@ -9,8 +9,8 @@ Bool =
 {
   type bool = external "bool";
   type t = bool;
-  true = external "true": bool;
-  false = external "false": bool;
+  true = external "Bool.true": bool;
+  false = external "Bool.false": bool;
   not b = if b then false else true;
   print b = external "Bool.print": bool -> ();
 };

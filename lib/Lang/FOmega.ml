@@ -276,9 +276,8 @@ end
 module Value = struct
   (** v *)
   type value =
-    | VPrim of Const.t
+    | VConst of Const.t
     | VLam of (value -> value)
-    | VExternal of (value -> value)
     | VRecord of (string * value) list
     | VTyLam of (unit -> value)
     | VPack of value
@@ -375,34 +374,35 @@ module PP = struct
     | Expr.EVar x -> var ppf x
     | Expr.EConst x -> Const.pp ppf x
     | Expr.ERecord [] -> Format.fprintf ppf "{ }"
-    | Expr.ERecord es ->
+    | Expr.ERecord xs ->
       let pp_list =
         let expr = Precedence.reset expr in
-        let pp_field ppf (l, e) = Format.fprintf ppf "@[<2>%s:@ %a@]" l expr e
+        let pp_field ppf (x, e) = Format.fprintf ppf "@[<2>%s:@ %a@]" x expr e
         and pp_sep ppf _ = Format.fprintf ppf ",@ " in
         Format.pp_print_list ~pp_sep pp_field
       in
       let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
-      Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" pp_list es br
+      Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" pp_list xs br
     | Expr.EExternal (s, t) ->
       Format.fprintf ppf "(@[external %s:@ %a@])" s (Precedence.reset typ) t
     | Expr.EProj _ as e ->
       let rec aux ppf = function
-        | Expr.EProj (e, l) -> Format.fprintf ppf "%a@;<0 2>.%s" aux e l
+        | Expr.EProj (e, l) -> Format.fprintf ppf "%a@,.%s" aux e l
         | e -> expr ppf e
       in
-      Precedence.wprintf PEProj NonAssoc ppf "@[%a@]" aux e
+      Precedence.wprintf PEProj NonAssoc ppf "@[<2>%a@]" aux e
     | (Expr.EApp _ | Expr.ETyApp _) as e ->
       let rec aux ppf = function
         | Expr.EApp (e1, e2) ->
-          Format.fprintf ppf "%a@;<1 2>%a" aux e1 (Precedence.right expr) e2
+          Format.fprintf ppf "%a@ %a" aux e1 (Precedence.right expr) e2
         | Expr.ETyApp (e1, t2) ->
-          Format.fprintf ppf "%a@;<1 2>[%a]" aux e1 (Precedence.reset typ) t2
+          Format.fprintf ppf "%a@ [%a]" aux e1 (Precedence.reset typ) t2
         | e -> Precedence.left expr ppf e
       in
-      Precedence.wprintf PEApp Left ppf "@[%a@]" aux e
+      Precedence.wprintf PEApp Left ppf "@[<2>%a@]" aux e
     | Expr.ECond (c, e1, e2) ->
-      let pf = Precedence.wprintf PECond NonAssoc ppf "@[if %a@ then %a@ else %a@]" in
+      let pf = Precedence.wprintf PECond NonAssoc ppf in
+      let pf = pf "@[<2>if@ @[%a@]@ then@ @[%a@]@ else@ @[%a@]@]" in
       pf expr c expr e1 expr e2
     | Expr.ELam (x, t, e) ->
       let pf = Precedence.wprintf PEComplex Right ppf "@[<2>λ @[%a:@ %a@].@ %a@]" in
@@ -417,18 +417,18 @@ module PP = struct
     | (Expr.EUnpack _ | Expr.ELetIn _) as e ->
       let rec aux ppf = function
         | Expr.EUnpack (a, x, e1, e2) ->
-          let pf = Format.fprintf ppf "@[unpack ⟨%a, %a⟩ =@ %a@] in@ %a" in
+          let pf = Format.fprintf ppf "@[unpack ⟨%a, %a⟩ =@;<1 2>%a@] in@ %a" in
           pf binder a var x expr e1 aux e2
         | Expr.ELetIn (x, e1, e2) ->
-          Format.fprintf ppf "@[<2>let %a =@ %a@] in@ %a" var x expr e1 aux e2
+          Format.fprintf ppf "@[<2>let %a =@;<1 2>%a@] in@ %a" var x expr e1 aux e2
         | e -> expr ppf e
       in
       Precedence.wprintf PEComplex Right ppf "@[%a@]" aux e
   ;;
 
   let rec value ppf = function
-    | Value.VPrim x -> Const.pp ppf x
-    | VLam _ | VTyLam _ | VExternal _ -> Format.pp_print_string ppf "<fun>"
+    | Value.VConst x -> Const.pp ppf x
+    | VLam _ | VTyLam _ -> Format.pp_print_string ppf "<fun>"
     | VRecord vs ->
       let pp_field ppf (l, v) = Format.fprintf ppf "%s: %a" l value v
       and pp_sep ppf _ = Format.pp_print_string ppf ", " in
@@ -588,6 +588,19 @@ module Typecheck = struct
           | t1, t2 -> Error.expected_matching_type t1 t2)
        | t -> Error.expected_bool t)
   ;;
+
+  let check env e =
+    trace
+      (fun m ->
+         let expr = Format.with_margin 140 PP.expr in
+         let expr = Format.with_max_boxes Int.max_int expr in
+         m ~header:"check" "%a" expr e)
+      (fun t m ->
+         let typ = Format.with_margin 140 PP.typ in
+         let typ = Format.with_max_boxes Int.max_int typ in
+         m ~header:"check" "%a" typ t)
+    @@ fun () -> infer env e
+  ;;
 end
 
 module Eval = struct
@@ -597,17 +610,17 @@ module Eval = struct
   module Env : sig
     type t
 
-    val empty : (string -> value option) -> t
+    val init : (string -> value option) -> t
     val add_var : var -> value -> t -> t
     val find_var : Var.t -> t -> value
     val find_external : string -> t -> value option
   end = struct
     type t = (string -> value option) * value Var.Map.t
 
-    let empty ext = ext, Var.Map.empty
+    let init extern = extern, Var.Map.empty
     let add_var x v (ext, vars) = ext, Var.Map.add x v vars
     let find_var x (_, vars) = Var.Map.find x vars
-    let find_external x (ext, _) = ext x
+    let find_external x (extern, _) = extern x
   end
 
   let rec eval env e =
@@ -617,11 +630,11 @@ module Eval = struct
     @@ fun _ ->
     match e with
     | EVar x -> Env.find_var x env
-    | EConst p -> VPrim p
+    | EConst p -> VConst p
     | ELam (x, _, e) -> VLam (fun v -> eval (Env.add_var x v env) e)
     | EApp (e1, e2) ->
       (match eval env e1, eval env e2 with
-       | (VLam f | VExternal f), v -> f v
+       | VLam f, v -> f v
        | _ -> assert false)
     | ERecord es ->
       let vs = List.map (fun (l, e) -> l, eval env e) es in
@@ -634,7 +647,6 @@ module Eval = struct
     | ETyApp (e, _) ->
       (match eval env e with
        | VTyLam f -> f ()
-       | VExternal f -> VExternal f
        | _ -> assert false)
     | EPack (_, e, _, _) -> VPack (eval env e)
     | EUnpack (_, x, e1, e2) ->
@@ -650,8 +662,8 @@ module Eval = struct
        | None -> Error.undefined_external_symbol id)
     | ECond (c, e1, e2) ->
       (match eval env c with
-       | VPrim (CBool true) -> eval env e1
-       | VPrim (CBool false) -> eval env e2
+       | VConst (CBool true) -> eval env e1
+       | VConst (CBool false) -> eval env e2
        | _ -> assert false)
   ;;
 end
