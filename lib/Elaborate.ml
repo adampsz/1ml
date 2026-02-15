@@ -317,11 +317,12 @@ module Type = struct
     Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t)
 
   and path env p =
+    trace (fun m -> m ~header:"path" "") (fun t m -> m ~header:"path" "~> %a" T.PP.typ t)
+    @@ fun () : T.Type.ttyp ->
     let rec aux args a r =
       match a, r with
       | Flat.FTyp (Ex x : Ex.tvar), S.Path.Rev.RPNil -> args (Ex (T.Type.TVar x) : Ex.typ)
-      | Flat.FRecord xs, S.Path.Rev.RPProj (r, x) ->
-        aux args (S.Var.assoc (S.Var.name x) xs |> snd) r
+      | Flat.FRecord xs, S.Path.Rev.RPProj (r, x) -> aux args (List.assoc x xs) r
       | a, S.Path.Rev.RPApp (r1, c2, _) ->
         let f t2 t1 = Flat.fold_left Sugar.Type.app (args t1) t2 in
         aux (f (cons env (Some c2))) a r1
