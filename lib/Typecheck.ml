@@ -183,7 +183,7 @@ module Subtype = struct
       when T.Effect.sub eff' eff ->
       let env = T.TVar.Set.add a1 env in
       let t1 = subst_arrow_arg a zip t1 in
-      let (T.Coercion.CMod ((_, tc1), c1, _)) = modu env t1 t1' in
+      let (T.Coercion.CMod ((_, _), c1, tc1, _)) = modu env t1 t1' in
       let t2' = T.Subst.modu (T.Subst.one_opt a1' tc1) t2' in
       (match eff with
        | Pure ->
@@ -193,7 +193,7 @@ module Subtype = struct
          let c2 =
            let null = T.TVar.null in
            let t2 = T.Subst.typ (T.Zipper.subst a zip) t2 in
-           T.Coercion.CMod ((null, None), c2, TMod (null, None, t2))
+           T.Coercion.CMod ((null, None), c2, None, TMod (null, None, t2))
          in
          T.Zipper.up zip, T.Coercion.CArrow (t1, eff, (tc1, c1, c2, eff'))
        | Impure ->
@@ -227,9 +227,9 @@ module Subtype = struct
   (**
     Subtyping rule [Γ ⊢ t′ ≤ ∃a. t]
    *)
-  and modu env (T.Type.TMod (a', _, t')) t =
+  and modu env (T.Type.TMod (a', k', t')) t =
     let tc, c, t = matches (T.TVar.Set.add a' env) t' t in
-    T.Coercion.CMod ((a', tc), c, t)
+    T.Coercion.CMod ((a', k'), c, tc, t)
 
   and equal a zip env t' t =
     match t', t with
@@ -492,8 +492,8 @@ module Check = struct
       let eff1, t1, T.Expr.EMod (_, _, e1) = modu_expr env e1
       and eff2, t2, T.Expr.EMod (_, _, e2) = modu_expr env e2
       and t = modu_typ env t in
-      let (T.Coercion.CMod (_, c1, _)) = Subtype.modu (Env.domain env) t1 t
-      and (T.Coercion.CMod (_, c2, _)) = Subtype.modu (Env.domain env) t2 t in
+      let (T.Coercion.CMod (_, c1, _, _)) = Subtype.modu (Env.domain env) t1 t
+      and (T.Coercion.CMod (_, c2, _, _)) = Subtype.modu (Env.domain env) t2 t in
       let k, t = path_prepend env t in
       let eff = T.Kind.eff k in
       let eff = T.Effect.join eff (T.Effect.join eff1 eff2) in
@@ -595,7 +595,7 @@ module Check = struct
           t2
         | _ -> failwith "todo error expected wrapped type"
       in
-      let (T.Coercion.CMod (_, c, _)) = Subtype.modu dom t1 t2 in
+      let (T.Coercion.CMod (_, c, _, _)) = Subtype.modu dom t1 t2 in
       let k2, t2 = path_prepend env t2 in
       k2, T.Kind.eff k2, t2, T.Expr.EUnwrap (x, inst, c, t2)
     | S.EExternal (x, t) ->

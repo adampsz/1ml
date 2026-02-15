@@ -160,7 +160,7 @@ module Coerce = struct
          let aux (x, c) = x, coerce (L.Var.assoc (L.Var.name x) vs |> snd) c in
          Value.VRecord (List.map aux cs)
        | _ -> assert false)
-    | L.Coercion.CArrow (_, _, (_, c1, CMod (_, c2, _), _)) ->
+    | L.Coercion.CArrow (_, _, (_, c1, CMod (_, c2, _, _), _)) ->
       (match v with
        | VFunction f -> VFunction (fun v -> coerce (f (coerce v c1)) c2)
        | _ -> assert false)

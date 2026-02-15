@@ -609,7 +609,7 @@ module Coercion = struct
     | CGeneralize of Implicit.gen * t
     | CInstantiate of t * Implicit.inst
 
-  and modu = CMod of (TVar.t * Type.cons option) * t * Type.modu
+  and modu = CMod of (TVar.t * Kind.t option) * t * Type.cons option * Type.modu
 end
 
 module Expr = struct
@@ -831,7 +831,7 @@ module PP = struct
 
   and cmodu : type a. (_ -> a -> _) -> _ -> a * _ -> _ =
     fun expr ppf -> function
-    | e, Coercion.CMod ((a', tc), c, TMod (a, _, t)) ->
+    | e, Coercion.CMod ((a', _), c, tc, TMod (a, _, t)) ->
       let x = X.next () in
       let pp_pack ppf =
         let pf = Format.fprintf ppf in
@@ -882,7 +882,9 @@ module PP = struct
       let pf = Format.fprintf ppf "(@[<1>%a@ [%a]@ %a@])%s" in
       pf (instantiate var) (x1, i1) cons tc (coercion var) (x2, c2) (effect_sub eff)
     | Expr.EType t -> Format.fprintf ppf "(type@[<-3>@ %a@])" modu t
-    | Expr.ESeal (x, c, tc, t) -> Format.fprintf ppf "(%a) :> (%a)" var x typ t
+    | Expr.ESeal (x, c, tc, t) ->
+      let pf = Format.fprintf ppf "@[<2>⟨%a, %a⟩@ :>@ [%a]@ (%a)@]" in
+      pf var x (coercion var) (x, c) cons tc typ t
     | Expr.EExternal (s, t) -> Format.fprintf ppf "(@[<2>external %s:@ @[%a@]@])" s typ t
     | Expr.EWrap (e, _, t) -> Format.fprintf ppf "wrap (%a) : (%a)" var e modu t
     | Expr.EUnwrap (e, _, _, t) -> Format.fprintf ppf "unwrap (%a) : (%a)" var e typ t

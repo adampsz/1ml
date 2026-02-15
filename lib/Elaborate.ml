@@ -434,9 +434,9 @@ module Coerce = struct
     | S.Coercion.CGeneralize (g, c) -> Implicit.generalize (coerce e) c env g
     | S.Coercion.CInstantiate (c, tc) -> coerce (Implicit.instantiate e env tc) env c
 
-  and modu e env (S.Coercion.CMod ((a', tc), c, TMod (a, k, t))) =
-    let (env, a'), tmp = Env.add_tvar a' (S.Type.Cons.kind tc) env, T.Var.fresh () in
-    let a = Flatten.tvar k in
+  and modu e env (S.Coercion.CMod ((a', k'), c, tc, TMod (a, k, t))) =
+    let (env, a'), tmp = Env.add_tvar a' k' env, T.Var.fresh () in
+    let env, a = Env.add_tvar a k env in
     let e2 = coerce (T.Expr.EVar tmp) env c in
     let e2 = Sugar.Expr.pack a (Type.cons env tc) (Type.typ env t) e2 in
     Sugar.Expr.unpack a' tmp e e2
@@ -523,7 +523,6 @@ module Elab = struct
       let env, es = List.fold_left_map (proj tmp) env ts in
       env, (tmp, a, e) :: es
     | S.Expr.BVal (x, e, g) ->
-      debug (fun m -> m ~header:"bind" "%a" S.PP.var x);
       let env' = Env.enter_field x env in
       let e = Implicit.generalize expr e env' g in
       let env, x = Env.add_var x env in
