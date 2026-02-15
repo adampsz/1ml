@@ -196,7 +196,7 @@ module Eval = struct
        | Some v -> v
        | None -> assert false)
     | L.Expr.EWrap (x, c, _) -> VWrapped (Coerce.coerce (Env.find x env) c)
-    | L.Expr.EUnwrap (x, i, c, _) ->
+    | L.Expr.EUnwrap (x, i, CMod (_, c, _, _), _) ->
       (match Implicit.instantiate (Env.find x env) i with
        | VWrapped v -> Coerce.coerce v c
        | _ -> assert false)

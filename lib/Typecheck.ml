@@ -595,7 +595,7 @@ module Check = struct
           t2
         | _ -> failwith "todo error expected wrapped type"
       in
-      let (T.Coercion.CMod (_, c, _, _)) = Subtype.modu dom t1 t2 in
+      let c = Subtype.modu dom t1 t2 in
       let k2, t2 = path_prepend env t2 in
       k2, T.Kind.eff k2, t2, T.Expr.EUnwrap (x, inst, c, t2)
     | S.EExternal (x, t) ->
