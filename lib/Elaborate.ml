@@ -415,7 +415,7 @@ end
 module Coerce = struct
   open Ex
 
-  let rec coerce e env c =
+  let rec _coerce e env c =
     match c with
     | S.Coercion.CRefl -> e
     | S.Coercion.CSingleton t -> Sugar.Expr.singleton (Type.modu env t)
@@ -434,6 +434,12 @@ module Coerce = struct
       Flat.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a1 e
     | S.Coercion.CGeneralize (g, c) -> Implicit.generalize (coerce e) c env g
     | S.Coercion.CInstantiate (c, tc) -> coerce (Implicit.instantiate e env tc) env c
+
+  and coerce e env c =
+    trace
+      (fun m -> m ~header:"coerce" "%a" (S.PP.coercion Format.pp_print_string) ("x", c))
+      (fun e m -> m ~header:"coerce" "~> %a" T.PP.expr e)
+    @@ fun () -> _coerce e env c
 
   and modu e env (S.Coercion.CMod ((a', k'), c, tc, TMod (a, k, t))) =
     let (env, a'), tmp = Env.add_tvar a' k' env, T.Var.fresh () in
@@ -457,8 +463,8 @@ module Elab = struct
     | S.Expr.EVar x -> T.Expr.EVar (Env.find_var x env)
     | S.Expr.EConst c -> T.Expr.EConst c
     | S.Expr.ECond (x, e1, c1, e2, c2, _) ->
-      let e1 = Coerce.coerce (expr env e1) env c1
-      and e2 = Coerce.coerce (expr env e2) env c2 in
+      let e1 = Coerce.modu (expr env e1) env c1
+      and e2 = Coerce.modu (expr env e2) env c2 in
       T.Expr.ECond (T.Expr.EVar (Env.find_var x env), e1, e2)
     | S.Expr.EStruct (xs, ts) ->
       let env, xs = List.fold_left_map bind env xs in

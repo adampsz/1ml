@@ -171,7 +171,7 @@ module Eval = struct
   let rec eval env = function
     | L.Expr.EVar x -> Env.find x env
     | L.Expr.EConst c -> Value.VConst c
-    | L.Expr.ECond (x, e1, c1, e2, c2, _) ->
+    | L.Expr.ECond (x, e1, CMod (_, c1, _, _), e2, CMod (_, c2, _, _), _) ->
       (match Env.find x env with
        | VConst (CBool true) -> Coerce.coerce (eval env e1) c1
        | VConst (CBool false) -> Coerce.coerce (eval env e2) c2
