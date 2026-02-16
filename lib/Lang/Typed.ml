@@ -550,7 +550,7 @@ end = struct
 
   let field x = function
     | z, None -> TRecord (x, []) :: z, None
-    | z, Some (Type.CRecord xs) -> TRecord (x, xs) :: z, None
+    | z, Some (Type.CRecord xs) -> TRecord (x, List.rev xs) :: z, None
     | _, Some _ -> invalid_arg "Zipper.record"
   ;;
 
@@ -572,9 +572,9 @@ end = struct
   ;;
 
   let up = function
-    | TRecord (x, xs) :: ts, Some c -> ts, Some (Type.CRecord ((x, c) :: xs))
+    | TRecord (x, xs) :: ts, Some c -> ts, Some (Type.CRecord (List.rev ((x, c) :: xs)))
     | TRecord (_, []) :: ts, None -> ts, None
-    | TRecord (_, xs) :: ts, None -> ts, Some (Type.CRecord xs)
+    | TRecord (_, xs) :: ts, None -> ts, Some (Type.CRecord (List.rev xs))
     | TLam (a, k) :: ts, Some c -> ts, Some (Type.CLam (a, k, c))
     | TLam (_, _) :: ts, None -> ts, None
     | [], _ -> invalid_arg "Zipper.up"
