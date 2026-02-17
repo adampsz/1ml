@@ -178,7 +178,7 @@ module Sugar = struct
 
   module Expr = struct
     let pack a tc s e =
-      let aux rest (Ex a : Ex.tvar) (Ex t : Ex.typ) s =
+      let aux (Ex a : Ex.tvar) (Ex t : Ex.typ) rest s =
         match T.Kind.hequal (T.TVar.kind a) (T.Type.kind t) with
         | Some Equal ->
           let b, e = rest (T.Type.Subst.subst_one a t s) in
@@ -186,16 +186,16 @@ module Sugar = struct
           (Ex a : Ex.tvar) :: b, T.Expr.EPack (t, e, a, s)
         | _ -> assert false
       in
-      let _, e = Flat.fold_left2 aux (Fun.const ([], e)) a tc s in
+      let _, e = Flat.fold_right2 aux a tc (Fun.const ([], e)) s in
       e
     ;;
 
     let unpack a x e1 e2 =
-      let aux (x, e2) (Ex a : Ex.tvar) =
+      let aux (Ex a : Ex.tvar) (x, e2) =
         let tmp = T.Var.fresh () in
         tmp, T.Expr.EUnpack (a, x, T.Expr.EVar tmp, e2)
       in
-      match Flat.fold_left aux (x, e2) a with
+      match Flat.fold_right aux a (x, e2) with
       | _, T.Expr.EUnpack (a', x, _, e2) when Flat.cardinal a > 0 ->
         (* Minor optimization - drop top-level let in *)
         T.Expr.EUnpack (a', x, e1, e2)
