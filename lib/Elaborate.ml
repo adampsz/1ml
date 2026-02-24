@@ -470,8 +470,8 @@ module Elab = struct
     | S.Expr.EVar x -> T.Expr.EVar (Env.find_var x env)
     | S.Expr.EConst c -> T.Expr.EConst c
     | S.Expr.ECond (x, (e1, c1), (e2, c2), _) ->
-      let e1 = Coerce.modu (expr env e1) env c1
-      and e2 = Coerce.modu (expr env e2) env c2 in
+      let e1 = Coerce.modu (modu env e1) env c1
+      and e2 = Coerce.modu (modu env e2) env c2 in
       T.Expr.ECond (T.Expr.EVar (Env.find_var x env), e1, e2)
     | S.Expr.EStruct (xs, ts) ->
       let env, xs = List.fold_left_map bind env xs in

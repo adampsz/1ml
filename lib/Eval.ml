@@ -213,7 +213,9 @@ module Eval = struct
     match expr with
     | L.Expr.EVar x -> Env.find x env
     | L.Expr.EConst c -> Value.VConst c
-    | L.Expr.ECond (x, (e1, CMod (_, c1, _, _)), (e2, CMod (_, c2, _, _)), _) ->
+    | L.Expr.ECond (x, e1, e2, _) ->
+      let L.Expr.EMod (_, _, e1), L.Coercion.CMod (_, c1, _, _) = e1
+      and L.Expr.EMod (_, _, e2), L.Coercion.CMod (_, c2, _, _) = e2 in
       (match Env.find x env with
        | VConst (CBool true) -> Coerce.coerce (eval env e1) c1
        | VConst (CBool false) -> Coerce.coerce (eval env e2) c2

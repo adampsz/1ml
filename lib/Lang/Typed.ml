@@ -631,7 +631,7 @@ module Expr = struct
   type expr =
     | EVar of Var.t
     | EConst of Const.t
-    | ECond of Var.t * (expr * Coercion.modu) * (expr * Coercion.modu) * Type.t
+    | ECond of Var.t * (modu * Coercion.modu) * (modu * Coercion.modu) * Type.t
     | EStruct of (bind list * (Var.t * Type.t) list)
     | EProj of expr * Var.t * Type.t
     | EFun of Var.t * Type.modu * Type.feff * modu
@@ -873,7 +873,7 @@ module PP = struct
     | Expr.ECond (x, (e1, c1), (e2, c2), t) ->
       let pp = Format.fprintf ppf in
       let pp = pp "@[<2>if@ @[%a@]@ then@ @[%a@]@ else@ @[%a@]@ :@ @[%a@]@]" in
-      pp var x (cmodu expr) (e1, c1) (cmodu expr) (e2, c2) typ t
+      pp var x (cmodu expr_modu) (e1, c1) (cmodu expr_modu) (e2, c2) typ t
     | Expr.EStruct ([], []) -> Format.pp_print_string ppf "{ } : { }"
     | Expr.EStruct (xs, ts) ->
       let pp_t_list =

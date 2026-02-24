@@ -1,0 +1,17 @@
+(==) = extern "==" : int -> int -> bool;
+
+type CELL = { type t a; set: 'a => a -> t a; get: 'a => t a -> a };
+
+MKC1 (_ : unit) :> CELL = { type t a = a; set x = x; get x = x };
+MKC2 (_ : unit) :> CELL = { type t a = unit -> a; set x _ = x; get f = f () };
+
+MKC (flip : bool) = if flip then MKC1 () else MKC2 () : CELL;
+
+C1 = MKC1 ();
+C2 = MKC2 ();
+
+c1 = C1.set 1;
+do Assert.eq (C1.get c1) 1;
+
+c2 = C2.set 2;
+do Assert.eq (C2.get c2) 2;

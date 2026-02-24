@@ -508,8 +508,8 @@ module Check = struct
        | T.Type.TPrim PBool -> ()
        | T.Type.TInfer z -> assert (T.Type.resolve z (wrap (T.Type.TPrim PBool)))
        | _ -> failwith "todo");
-      let eff1, t1, T.Expr.EMod (_, _, e1) = modu_expr env e1
-      and eff2, t2, T.Expr.EMod (_, _, e2) = modu_expr env e2
+      let eff1, t1, e1 = modu_expr env e1
+      and eff2, t2, e2 = modu_expr env e2
       and t = modu_typ env t in
       let c1 = Subtype.modu (Env.domain env) t1 t
       and c2 = Subtype.modu (Env.domain env) t2 t in

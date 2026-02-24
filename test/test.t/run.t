@@ -11,3 +11,4 @@
   : ok/007-implicit.1ml
   : ok/008-with.1ml
   : ok/009-multiple-types.1ml
+  : ok/010.1ml
