@@ -1,0 +1,15 @@
+type X = {
+  type t;
+  type t1 (a : type);
+  type t2 (a : type) (b: type => type);
+  type t3 (a : type) (b: type => type) (c: (type => type) => type => type);
+};
+
+x1 = {
+  type t = int;
+  type t1 (a : type) = a;
+  type t2 (a : type) (b: type => type) = b a;
+  type t3 (a : type) (b: type => type) (c: (type => type) => type => type) = c b a;
+};
+
+x1 = x1 :> X;

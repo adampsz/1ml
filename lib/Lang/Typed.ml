@@ -466,16 +466,23 @@ module Subst = struct
   ;;
 
   let rec typ ?(rename = TVar.Map.empty) f t =
+    match ctyp ~rename f t with
+    | CType t -> t
+    | _ -> assert false
+
+  and ctyp ?(rename = TVar.Map.empty) f t =
     match Type.view t with
-    | TInfer _ -> t
+    | TInfer _ -> CType t
     | TAbstr p -> path ~rename f p
-    | TPrim _ -> t
+    | TPrim p -> CType (TPrim p |> Type.wrap)
     | TArrow (TMod (a1, k1, t1), eff, t2) ->
       let a1, rename = freshen a1 rename in
-      TArrow (TMod (a1, k1, typ ~rename f t1), eff, modu ~rename f t2) |> Type.wrap
-    | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap
-    | TSingleton t -> TSingleton (modu ~rename f t) |> Type.wrap
-    | TWrapped t -> TWrapped (modu ~rename f t) |> Type.wrap
+      let t = TArrow (TMod (a1, k1, typ ~rename f t1), eff, modu ~rename f t2) in
+      CType (Type.wrap t)
+    | TRecord xs ->
+      CType (TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap)
+    | TSingleton t -> CType (TSingleton (modu ~rename f t) |> Type.wrap)
+    | TWrapped t -> CType (TWrapped (modu ~rename f t) |> Type.wrap)
 
   and modu ?(rename = TVar.Map.empty) f (TMod (a, k, t)) =
     let a, rename = freshen a rename in
@@ -485,34 +492,42 @@ module Subst = struct
     | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons ~rename f t) xs)
     | CLam (a, k, t) ->
       freshen a rename |> fun (a, rename) -> CLam (a, k, cons ~rename f t)
-    | CType t -> CType (typ ~rename f t)
+    | CType t -> ctyp ~rename f t
 
   and path ?(rename = TVar.Map.empty) f p =
     let a, r = Path.rev_map (cons ~rename f) p in
     match TVar.Map.find_opt a rename with
-    | Some a -> TAbstr (Path.Rev.rev a r) |> Type.wrap
+    | Some a -> CType (TAbstr (Path.Rev.rev a r) |> Type.wrap)
     | None -> f (Path.Rev.rev a r)
   ;;
 
-  let id p = Type.wrap (TAbstr p)
+  let id p = CType (Type.wrap (TAbstr p))
 
   let rec one a t p =
-    let rec aux = function
-      | Path.Rev.RPNil, acc -> acc
-      | Path.Rev.RPApp (r, tc, _), Type.CLam (a, _, t) -> aux (r, cons (one a tc) t)
-      | Path.Rev.RPProj (r, x), Type.CRecord xs ->
-        (match List.assoc_opt x xs with
-         | Some t -> aux (r, t)
-         (* Support partial substitution in [TWith] type *)
-         | None -> CType (Type.wrap (TAbstr p)))
-      | _ -> failwith "todo bug"
+    let unabstr t =
+      match Type.view t with
+      | TAbstr p -> p
+      | _ -> assert false
     in
-    match Path.rev p with
-    | a', r when TVar.equal a a' ->
-      (match aux (r, t) with
-       | CType t -> t
-       | _ -> failwith "todo bug")
-    | _ -> Type.wrap (TAbstr p)
+    let rec aux = function
+      | PVar a' -> if TVar.equal a' a then t else id (PVar a')
+      | PProj (p, x) ->
+        (match aux p with
+         | CRecord xs ->
+           (match List.assoc_opt x xs with
+            | Some c -> c
+            | None -> CType (TAbstr (PProj (p, x)) |> Type.wrap))
+         | CType t -> CType (TAbstr (PProj (unabstr t, x)) |> Type.wrap)
+         | _ -> assert false)
+      | PApp (p, c, k) ->
+        (match aux p with
+         | CLam (a', k', c') ->
+           assert (Kind.equal k' k);
+           cons (one a' c) c'
+         | CType t -> CType (TAbstr (PApp (unabstr t, c, k)) |> Type.wrap)
+         | _ -> assert false)
+    in
+    aux p
   ;;
 
   let one_opt a = function
@@ -533,7 +548,7 @@ module Zipper : sig
   val up : t -> t
   val get : t -> Type.cons option
   val finish : t -> Type.cons option
-  val subst : TVar.t -> t -> Type.cons Path.t -> Type.t
+  val subst : TVar.t -> t -> Type.cons Path.t -> Type.cons
 end = struct
   type trace =
     | TRecord of Var.t * (Var.t * Type.cons) list
@@ -616,16 +631,20 @@ module Expr = struct
   type expr =
     | EVar of Var.t
     | EConst of Const.t
-    | ECond of Var.t * expr * Coercion.modu * expr * Coercion.modu * Type.t
+    | ECond of Var.t * (expr * Coercion.modu) * (expr * Coercion.modu) * Type.t
     | EStruct of (bind list * (Var.t * Type.t) list)
     | EProj of expr * Var.t * Type.t
     | EFun of Var.t * Type.modu * Type.feff * modu
-    | EApp of Var.t * Implicit.inst * Type.cons option * Type.feff * Var.t * Coercion.t
+    | EApp of
+        (Var.t * Implicit.inst) * Type.cons option * Type.feff * (Var.t * Coercion.t)
     | EType of Type.modu
     | ESeal of Var.t * Coercion.t * Type.cons option * Type.t
-    | EExternal of string * Type.t
-    | EWrap of Var.t * Coercion.t * Type.modu
+    | EExtern of string * Type.t
+    | EWrap of (Var.t * Coercion.t) * Type.modu
     | EUnwrap of Var.t * Implicit.inst * Coercion.modu * Type.t
+    | ECoerce of expr * Coercion.t
+    | EInstantiate of expr * Implicit.inst
+    | EGeneralize of Implicit.gen * expr
 
   and modu = EMod of TVar.t * Kind.t option * expr
 
@@ -670,7 +689,10 @@ module PP = struct
 
   let var ppf x =
     let x, id = Var.name x, Var.id x in
-    if String.length x = 0 || String.contains "$&*+-/=>@^|%<." x.[0]
+    if
+      String.length x = 0
+      || String.contains "$&*+-/=>@^|%<." x.[0]
+      || String.exists (String.contains "\\/.") x
     then Format.fprintf ppf "(%s)#%d" x id
     else Format.fprintf ppf "%s#%d" x id
   ;;
@@ -782,7 +804,7 @@ module PP = struct
     let rec aux ppf = function
       | e, Implicit.IInst (i, tc, t) ->
         Format.fprintf ppf "%a@ [%a]@ (...)" aux (e, i) (Precedence.reset cons) tc
-      | e, Implicit.INil -> Precedence.left expr ppf e
+      | e, Implicit.INil _ -> Precedence.left expr ppf e
     in
     Precedence.wprintf PEApp Left ppf "@[<2>%a@]" aux (e, i)
   ;;
@@ -793,7 +815,7 @@ module PP = struct
       let pf = pf "@[<2>∀ %a:@;<1 2>%a.@ @[%s%a@;<1 2>%s %a@]@]" in
       let pf = pf tvar a1 kind k1 (effect_tick Implicit) typ t1 (effect_arrow Implicit) in
       pf (generalize expr) (g, e)
-    | Implicit.GNil, e -> expr ppf e
+    | Implicit.GNil _, e -> expr ppf e
   ;;
 
   let rec coercion : type a. (_ -> a -> _) -> _ -> a * _ -> _ =
@@ -848,7 +870,7 @@ module PP = struct
   let rec expr ppf = function
     | Expr.EVar x -> var ppf x
     | Expr.EConst c -> Const.pp ppf c
-    | Expr.ECond (x, e1, c1, e2, c2, t) ->
+    | Expr.ECond (x, (e1, c1), (e2, c2), t) ->
       let pp = Format.fprintf ppf in
       let pp = pp "@[<2>if@ @[%a@]@ then@ @[%a@]@ else@ @[%a@]@ :@ @[%a@]@]" in
       pp var x (cmodu expr) (e1, c1) (cmodu expr) (e2, c2) typ t
@@ -878,15 +900,15 @@ module PP = struct
       let pf = pf "@[<2>Λ @[@,%a:@ %a@].@ fun %s(@[<-4>@,%a:@ %a@])@ %s %a@]" in
       let pf = pf tvar a kind k (effect_tick eff) var x typ t in
       pf (effect_arrow eff) (Precedence.right expr_modu) e
-    | Expr.EApp (x1, i1, tc, eff, x2, c2) ->
+    | Expr.EApp ((x1, i1), tc, eff, (x2, c2)) ->
       let pf = Format.fprintf ppf "(@[<1>%a@ [%a]@ %a@])%s" in
       pf (instantiate var) (x1, i1) cons tc (coercion var) (x2, c2) (effect_sub eff)
     | Expr.EType t -> Format.fprintf ppf "(type@[<-3>@ %a@])" modu t
     | Expr.ESeal (x, c, tc, t) ->
-      let pf = Format.fprintf ppf "@[<2>⟨%a, %a⟩@ :>@ [%a]@ (%a)@]" in
-      pf var x (coercion var) (x, c) cons tc typ t
-    | Expr.EExternal (s, t) -> Format.fprintf ppf "(@[<2>external %s:@ @[%a@]@])" s typ t
-    | Expr.EWrap (e, _, t) -> Format.fprintf ppf "wrap (%a) : (%a)" var e modu t
+      let pf = Format.fprintf ppf "@[<2>%a@ :>@ [%a]@ (%a)@]" in
+      pf (coercion var) (x, c) cons tc typ t
+    | Expr.EExtern (s, t) -> Format.fprintf ppf "(@[<2>extern %s:@ @[%a@]@])" s typ t
+    | Expr.EWrap ((e, _), t) -> Format.fprintf ppf "wrap (%a) : (%a)" var e modu t
     | Expr.EUnwrap (e, _, _, t) -> Format.fprintf ppf "unwrap (%a) : (%a)" var e typ t
 
   and bind ppf = function

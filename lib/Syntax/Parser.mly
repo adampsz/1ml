@@ -32,7 +32,7 @@
 %token KW_AND      "and"
 %token KW_DO       "do"
 %token KW_ELSE     "else"
-%token KW_EXTERNAL "external"
+%token KW_EXTERN   "extern"
 %token KW_FUN      "fun"
 %token KW_IF       "if"
 %token KW_IN       "in"
@@ -45,7 +45,6 @@
 %token KW_WITH     "with"
 %token KW_WRAP     "wrap"
 
-%nonassoc "wrap"
 %right "->" "=>"
 %left "else"
 %left "let"
@@ -84,7 +83,7 @@ typ:
   | "(" x=var ":" t1=typ ")" "=>" t2=typ %prec P_ARROW { Sugar.T (TArrow (x, Sugar.as_typ t1, Explicit, Pure,   Sugar.as_typ t2) @@ $loc) }
   | "(" x=var ":" t1=typ ")" "->" t2=typ %prec P_ARROW { Sugar.T (TArrow (x, Sugar.as_typ t1, Explicit, Impure, Sugar.as_typ t2) @@ $loc) }
 
-  | "wrap" t=typ { Sugar.T (TWrapped (Sugar.as_typ t) @@ $loc) }
+  | "wrap" t=typ_atom { Sugar.T (TWrapped (Sugar.as_typ t) @@ $loc) }
 
   (* Sugar *)
   | t1=typ "=>" t2=typ %prec P_ARROW { Sugar.T (TArrow (Sugar.ident (Some $loc(t1)), Sugar.as_typ t1, Explicit, Pure,   Sugar.as_typ t2) @@ $loc) }
@@ -107,7 +106,7 @@ typ_atom:
   | "_"                      { Sugar.T (THole @@ $loc) }
   | "(" ")"                  { Sugar.T (TPrim PUnit @@ $loc) }
   | "(" "=" "type" t=typ ")" { Sugar.T (TSingletonType (Sugar.as_typ t) @@ $loc) }
-  | "external" x=STRING      { Sugar.T (Sugar.typ_external ~span:$loc x) }
+  | "extern" x=STRING        { Sugar.T (Sugar.typ_extern ~span:$loc x) }
   | "(" t=typ ")"            { t }
 
   | t=typ_proj { Sugar.E t }
@@ -165,10 +164,10 @@ expr_op:
   | "if" c=expr "then" e1=expr "else" e2=expr_op t=toption(preceded(":", typ))
     { Sugar.expr_cond ~span:$loc c e1 e2 (Sugar.as_typ t) }
 
-    | "wrap"   e=expr_op ":" t=typ { Sugar.expr_wrap   ~span:$loc e (Sugar.as_typ t) }
-    | "unwrap" e=expr_op ":" t=typ { Sugar.expr_unwrap ~span:$loc e (Sugar.as_typ t) }
+  | "wrap"   e=expr_op ":" t=typ { Sugar.expr_wrap   ~span:$loc e (Sugar.as_typ t) }
+  | "unwrap" e=expr_op ":" t=typ { Sugar.expr_unwrap ~span:$loc e (Sugar.as_typ t) }
 
-    | "external" sym=STRING ":" t=typ { EExternal (sym, Sugar.as_typ t) @@ $loc }
+  | "extern" sym=STRING ":" t=typ { EExtern (sym, Sugar.as_typ t) @@ $loc }
 
   | lhs=expr_op op="||" rhs=expr_op { Sugar.expr_or  ~span:$loc ~op:$loc(op) lhs rhs }
   | lhs=expr_op op="&&" rhs=expr_op { Sugar.expr_and ~span:$loc ~op:$loc(op) lhs rhs }
@@ -224,7 +223,7 @@ param:
 ;
 
 typ_param:
-  |     x=var                { Sugar.pat_typ ~span:$loc(x) x,                              Explicit }
+  |     x=var                { Sugar.pat_typ ~span:$loc(x) x,                                 Explicit }
   | "(" x=var ":" t=typ ")"  { Sugar.PAnnot (Sugar.PId x @@ $loc(x), Sugar.as_typ t) @@ $loc, Explicit }
 
   | "'"     x=var                { Sugar.pat_typ ~span:$loc(x) x, Implicit }

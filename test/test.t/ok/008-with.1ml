@@ -1,0 +1,8 @@
+(* subtyping (= type t1) < (= type t2) checks for type equivalence between t1 and t2 *)
+
+_: (= type { type t = int }) = type { type t } with type t = int;
+_: (= type { x: { y: { z: { type t = int } } } }) = type { x: { y: { z: { type t } } } } with type x.y.z.t = int;
+
+_: (= type { type t = int; type u = t }) = type { type t; type u = t } with type t = int;
+_: (= type { type t = int; type u = t }) = type { type u; type t = u } with type u = int;
+(* _: (= type { type t = int; type u = t }) = type { type t; type u     } with type u = t; *) (* TODO: allow referencing contained types in the with type *)

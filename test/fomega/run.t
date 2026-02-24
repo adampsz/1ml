@@ -1,4 +1,4 @@
-  $ ./FOmega.exe ./FOmega.fo
+  $ ./FOmega.exe ./FOmega.txt
   
   0. Hello
   

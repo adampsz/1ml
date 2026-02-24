@@ -10,7 +10,7 @@
     | "false"    -> KW_FALSE
     | "as"       -> KW_AS
     | "exists"   -> KW_EXISTS
-    | "external" -> KW_EXTERNAL
+    | "extern"   -> KW_EXTERN
     | "forall"   -> KW_FORALL
     | "in"       -> KW_IN
     | "lambda"   -> KW_LAMBDA

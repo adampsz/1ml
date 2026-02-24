@@ -1,3 +1,5 @@
 (library
  (name Lang)
- (libraries Util))
+ (libraries Util)
+ (instrumentation
+  (backend bisect_ppx)))

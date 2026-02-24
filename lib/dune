@@ -1,3 +1,5 @@
 (library
  (name OneMl)
- (libraries Util Lang Syntax))
+ (libraries Util Lang Syntax)
+ (instrumentation
+  (backend bisect_ppx)))

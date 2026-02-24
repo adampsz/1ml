@@ -1,6 +1,8 @@
 (library
  (name Syntax)
- (libraries Util Lang))
+ (libraries Util Lang)
+ (instrumentation
+  (backend bisect_ppx)))
 
 (ocamllex Lexer)
 

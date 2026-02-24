@@ -46,7 +46,7 @@ and expr_data =
   | EApp of ident * ident
   | EType of typ
   | ESeal of ident * typ
-  | EExternal of string * typ
+  | EExtern of string * typ
   | EWrap of ident * typ
   | EUnwrap of ident * typ
 
@@ -122,7 +122,7 @@ module PP = struct
       pp ident x1 ident x2
     | EType t -> fprintf ppf "(type %a)" typ t
     | ESeal (e, t) -> fprintf ppf "(%a) :> (%a)" ident e typ t
-    | EExternal (s, t) -> fprintf ppf "(external %s: %a)" s typ t
+    | EExtern (s, t) -> fprintf ppf "(extern %s: %a)" s typ t
     | EWrap (e, t) -> fprintf ppf "wrap (%a) : (%a)" ident e typ t
     | EUnwrap (e, t) -> fprintf ppf "unwrap (%a) : (%a)" ident e typ t
 
@@ -185,7 +185,7 @@ module Sugar = struct
       let span = Node.span p in
       match Node.data p with
       | PId x -> (BVal (x, e) @@ Node.span x) :: bs
-      | PHole -> bs
+      | PHole -> (BVal (ident None, e) @@ None) :: bs
       | PStruct ps ->
         List.fold_left (fun bs (x, p) -> aux bs (EProj (e, x) @@ Node.span p) p) bs ps
       | PAnnot (p, t) ->
@@ -324,7 +324,7 @@ module Sugar = struct
   let typ_app ?span:_ t ts = expr_app t ts
   let typ_fun ?span:_ ps t = expr_fun ps (EType t @@ Node.span t)
 
-  let typ_external ?span = function
+  let typ_extern ?span = function
     | "unit" -> TPrim PUnit @@ span
     | "bool" -> TPrim PBool @@ span
     | "int" -> TPrim PInt @@ span

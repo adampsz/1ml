@@ -7,7 +7,7 @@
     | "and"      -> KW_AND
     | "do"       -> KW_DO
     | "else"     -> KW_ELSE
-    | "external" -> KW_EXTERNAL
+    | "extern"   -> KW_EXTERN
     | "fun"      -> KW_FUN
     | "if"       -> KW_IF
     | "in"       -> KW_IN

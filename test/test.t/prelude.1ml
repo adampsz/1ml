@@ -1,0 +1,12 @@
+type unit = extern "unit";
+type bool = extern "bool";
+type int = extern "int";
+type string = extern "string";
+
+true = extern "Bool.true" : bool;
+false = extern "Bool.false" : bool;
+
+Assert = {
+  ok = extern "Assert.ok" : bool -> unit;
+  eq 'a (x : a) (y : a) = (extern "Assert.eq" : a -> a -> unit) x y;
+}

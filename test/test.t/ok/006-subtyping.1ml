@@ -1,0 +1,38 @@
+f (x: unit): unit = x;
+f (x: int): int = x;
+
+f (x: {}): {} = x;
+f (x: { a: unit }): { a: unit } = x;
+f (x: { a: unit; b: unit }): {} = x;
+f (x: { a: unit; b: unit }): { b: unit; a: unit } = x;
+
+f (x: unit -> unit): unit -> unit = x;
+f (x: unit => unit): unit => unit = x;
+f (x: unit => unit): unit -> unit = x;
+
+f (x: (unit -> unit) -> (unit => unit)): (unit => unit) -> (unit -> unit) = x;
+
+f (x: { type a = int; x: int }): { type a; x: a   } = x;
+f (x: { type a = int; x: int }): { type a; x: int } = x;
+f (x: { type a = int; x: a   }): { type a; x: a   } = x;
+f (x: { type a = int; x: a   }): { type a; x: int } = x;
+f (x: { type a;       x: a   }): { type a; x: a   } = x;
+
+f (x: { type a = int; type b = int }): { type a = int; type b = int } = x;
+f (x: { type a = int; type b = int }): { type a = int; type b = a   } = x;
+f (x: { type a = int; type b = int }): { type a = int; type b       } = x;
+f (x: { type a = int; type b = int }): { type a;       type b = int } = x;
+f (x: { type a = int; type b = int }): { type a;       type b = a   } = x;
+f (x: { type a = int; type b = int }): { type a;       type b       } = x;
+f (x: { type a = int; type b = a   }): { type a = int; type b = int } = x;
+f (x: { type a = int; type b = a   }): { type a = int; type b = a   } = x;
+f (x: { type a = int; type b = a   }): { type a = int; type b       } = x;
+f (x: { type a = int; type b = a   }): { type a;       type b = int } = x;
+f (x: { type a = int; type b = a   }): { type a;       type b = a   } = x;
+f (x: { type a = int; type b = a   }): { type a;       type b       } = x;
+f (x: { type a      ; type b = a   }): { type a;       type b = a   } = x;
+f (x: { type a      ; type b = a   }): { type a;       type b       } = x;
+f (x: { type a      ; type b       }): { type a;       type b       } = x;
+
+f (x: 'a => a): int = x;
+f (x: int): 'a => int = x;

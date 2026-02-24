@@ -8,4 +8,4 @@
  (modules Parser))
 
 (cram
- (deps ./FOmega.exe ./FOmega.fo))
+ (deps ./FOmega.exe ./FOmega.txt))

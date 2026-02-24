@@ -1,6 +1,6 @@
-let print = (external print: forall a. a -> unit) in
-let add = (external add: int -> int -> int) in
-let sub = (external sub: int -> int -> int) in
+let print = (extern print: forall a. a -> unit) in
+let add = (extern add: int -> int -> int) in
+let sub = (extern sub: int -> int -> int) in
 
 let _ = print [string] "\n0. Hello\n" in
 
@@ -12,7 +12,7 @@ let _ = print [int] (add 5 (sub 6 2)) in
   Pairs (Record encoding)
 \*************************/
 
-let print = (external print: forall a. a -> unit) in
+let print = (extern print: forall a. a -> unit) in
 
 let _ = print [string] "\n1. Pairs (Record encoding)\n" in
 
@@ -37,7 +37,7 @@ let _ = print [bool] (pair.snd [int] [bool] p) in
   Pairs (Church encoding)
 \*************************/
 
-let print = (external print: forall a. a -> unit) in
+let print = (extern print: forall a. a -> unit) in
 
 let _ = print [string] "\n2. Pairs (Church encoding)\n" in
 
@@ -64,10 +64,10 @@ let _ = print [bool] (pair.snd [int] [bool] p) in
   Lists (right fold encoding)
 \*****************************/
 
-let panic = (external panic: forall a. string -> a) in
-let print = (external print: forall a. a -> unit) in
-let add = (external add: int -> int -> int) in
-let sub = (external sub: int -> int -> int) in
+let panic = (extern panic: forall a. string -> a) in
+let print = (extern print: forall a. a -> unit) in
+let add = (extern add: int -> int -> int) in
+let sub = (extern sub: int -> int -> int) in
 
 let _ = print [string] "\n3. Lists (right fold encoding)\n" in
 
@@ -121,9 +121,9 @@ let _ = list.foldr [list int] [unit] (lambda xs: list int, _: unit. print [int] 
   Church numerals
 \******************/
 
-let print = (external print: forall a. a -> unit) in
-let add = (external add: int -> int -> int) in
-let mul = (external mul: int -> int -> int) in
+let print = (extern print: forall a. a -> unit) in
+let add = (extern add: int -> int -> int) in
+let mul = (extern mul: int -> int -> int) in
 
 let _ = print [string] "\n4. Church numerals\n" in
 

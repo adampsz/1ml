@@ -267,7 +267,7 @@ module Expr = struct
     (* Sugar *)
     | ELetIn of var * expr * expr (** let x = e1 in e2 *)
     (* Non-standard *)
-    | EExternal of string * ttyp
+    | EExtern of string * ttyp
     | ECond of expr * expr * expr
 
   type t = expr
@@ -283,6 +283,19 @@ module Value = struct
     | VPack of value
 
   type t = value
+
+  let rec equal x y =
+    match x, y with
+    | VLam _, _ | _, VLam _ -> invalid_arg "Value.equal"
+    | VTyLam _, _ | _, VTyLam _ -> invalid_arg "Value.equal"
+    | VConst x, VConst y -> Const.equal x y
+    | VConst _, _ -> false
+    | VRecord xs, VRecord ys ->
+      List.equal (fun (x, xv) (y, yv) -> x = y && equal xv yv) xs ys
+    | VRecord _, _ -> false
+    | VPack x, VPack y -> equal x y
+    | VPack _, _ -> false
+  ;;
 end
 
 module PP = struct
@@ -383,8 +396,8 @@ module PP = struct
       in
       let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
       Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" pp_list xs br
-    | Expr.EExternal (s, t) ->
-      Format.fprintf ppf "(@[external %s:@ %a@])" s (Precedence.reset typ) t
+    | Expr.EExtern (s, t) ->
+      Format.fprintf ppf "(@[extern %s:@ %a@])" s (Precedence.reset typ) t
     | Expr.EProj _ as e ->
       let rec aux ppf = function
         | Expr.EProj (e, l) -> Format.fprintf ppf "%a@,.%s" aux e l
@@ -440,7 +453,7 @@ end
 module Error = struct
   open Diagnostic.Error
 
-  let undefined_external_symbol id = error "undefined external symbol `%s'" id
+  let undefined_extern_symbol id = error "undefined external symbol `%s'" id
   let undefined_variable x = error "undefined variable `%a'" PP.var x
   let undefined_type_variable x = error "undefined type variable `%a'" PP.tvar x
 
@@ -579,7 +592,7 @@ module Typecheck = struct
     | ELetIn (x, e1, e2) ->
       let t1 = infer env e1 in
       infer (Env.add_var x t1 env) e2
-    | EExternal (_, t) -> freshen env t
+    | EExtern (_, t) -> freshen env t
     | ECond (c, e1, e2) ->
       (match infer env c with
        | TPrim PBool ->
@@ -613,14 +626,14 @@ module Eval = struct
     val init : (string -> value option) -> t
     val add_var : var -> value -> t -> t
     val find_var : Var.t -> t -> value
-    val find_external : string -> t -> value option
+    val find_extern : string -> t -> value option
   end = struct
     type t = (string -> value option) * value Var.Map.t
 
     let init extern = extern, Var.Map.empty
     let add_var x v (ext, vars) = ext, Var.Map.add x v vars
     let find_var x (_, vars) = Var.Map.find x vars
-    let find_external x (extern, _) = extern x
+    let find_extern x (extern, _) = extern x
   end
 
   let rec eval env e =
@@ -656,10 +669,10 @@ module Eval = struct
     | ELetIn (x, e1, e2) ->
       let v1 = eval env e1 in
       eval (Env.add_var x v1 env) e2
-    | EExternal (id, _) ->
-      (match Env.find_external id env with
+    | EExtern (id, _) ->
+      (match Env.find_extern id env with
        | Some v -> v
-       | None -> Error.undefined_external_symbol id)
+       | None -> Error.undefined_extern_symbol id)
     | ECond (c, e1, e2) ->
       (match eval env c with
        | VConst (CBool true) -> eval env e1

@@ -1,4 +1,0 @@
-(cram
- (deps
-  (package 1ml)
-  (glob_files *.1ml)))

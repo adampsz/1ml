@@ -3,7 +3,7 @@
 Fun =
 {
   (* bot = rec bot => fun x => bot x; *) (* TODO: recursive functions *)
-  bot = external "Fun.bot" : 'a => 'b => a => b;
+  bot = extern "Fun.bot" : 'a => 'b => a => b;
   id x = x;
   const x y = x;
   (>>) (f, g) x = g (f x);
@@ -18,19 +18,19 @@ include Fun;
 
 Bool =
 {
-  type bool = external "bool";
+  type bool = extern "bool";
   type t = bool;
-  true = external "Bool.true" : bool;
-  false = external "Bool.false" : bool;
+  true = extern "Bool.true" : bool;
+  false = extern "Bool.false" : bool;
   not b = if b then false else true;
-  print = external "Bool.print" : bool -> ();
+  print = extern "Bool.print" : bool -> ();
 };
 type bool = Bool.t;
 true = Bool.true;
 false = Bool.false;
 not = Bool.not;
 
-(==) 'a (x: a) (y: a) = (external "==" : (a: type) => a -> a -> bool) a x y;
+(==) 'a (x: a) (y: a) = (extern "==" : a -> a -> bool) x y;
 (<>) 'a (x: a) (y: a) = not (x == y);
 
 
@@ -38,18 +38,18 @@ not = Bool.not;
 
 Int =
 {
-  type int = external "int";
+  type int = extern "int";
   type t = int;
-  (+) = external "Int.+" : int -> int -> int;
-  (-) = external "Int.-" : int -> int -> int;
-  (*) = external "Int.*" : int -> int -> int;
-  (/) = external "Int./" : int -> int -> int;
-  (%) = external "Int.%" : int -> int -> int;
-  (<) = external "Int.<" : int -> int -> bool;
-  (>) = external "Int.>" : int -> int -> bool;
-  (<=) = external "Int.<=" : int -> int -> bool;
-  (>=) = external "Int.>=" : int -> int -> bool;
-  print = external "Int.print" : int -> ();
+  (+) = extern "Int.+" : int -> int -> int;
+  (-) = extern "Int.-" : int -> int -> int;
+  (*) = extern "Int.*" : int -> int -> int;
+  (/) = extern "Int./" : int -> int -> int;
+  (%) = extern "Int.%" : int -> int -> int;
+  (<) = extern "Int.<" : int -> int -> bool;
+  (>) = extern "Int.>" : int -> int -> bool;
+  (<=) = extern "Int.<=" : int -> int -> bool;
+  (>=) = extern "Int.>=" : int -> int -> bool;
+  print = extern "Int.print" : int -> ();
 };
 type int = Int.t;
 (+) = Int.+;
@@ -67,11 +67,11 @@ type int = Int.t;
 
 Char =
 {
-  type char = external "char";
+  type char = extern "char";
   type t = char;
-  toInt = external "Char.toInt" : char -> int;
-  fromInt = external "Char.fromInt" : int -> char;
-  print = external "Char.print" : char -> ();
+  toInt = extern "Char.toInt" : char -> int;
+  fromInt = extern "Char.fromInt" : int -> char;
+  print = extern "Char.print" : char -> ();
 };
 type char = Char.t;
 
@@ -80,17 +80,17 @@ type char = Char.t;
 
 Text =
 {
-  type text = external "string";
+  type text = extern "string";
   type t = text;
-  (++) = external "Text.++" : text -> text -> text;
-  (<) = external "Text.<" : text -> text -> bool;
-  (>) = external "Text.>" : text -> text -> bool;
-  (<=) = external "Text.<=" : text -> text -> bool;
-  (>=) = external "Text.>=" : text -> text -> bool;
-  lenght = external "Text.length" : text -> int;
-  sub = external "Text.sub" : int -> int -> text -> text;
-  fromChar = external "Text.fromChar" : char -> text;
-  print = external "Text.print" : text -> ();
+  (++) = extern "Text.++" : text -> text -> text;
+  (<) = extern "Text.<" : text -> text -> bool;
+  (>) = extern "Text.>" : text -> text -> bool;
+  (<=) = extern "Text.<=" : text -> text -> bool;
+  (>=) = extern "Text.>=" : text -> text -> bool;
+  lenght = extern "Text.length" : text -> int;
+  sub = extern "Text.sub" : int -> int -> text -> text;
+  fromChar = extern "Text.fromChar" : char -> text;
+  print = extern "Text.print" : text -> ();
 };
 type text = Text.t;
 (++) = Text.++;
@@ -108,7 +108,7 @@ type OPT =
 };
 Opt :> OPT =
 {
-  type opt a = wrap (b : type) => (() -> b) -> (a -> b) -> b;
+  type opt a = wrap ((b : type) => (() -> b) -> (a -> b) -> b);
   none 'a = wrap (fun (b : type) (n : () -> b) (s : a -> b) => n ()) : opt a;
   some 'a x = wrap (fun (b : type) (n : () -> b) (s : a -> b) => s x) : opt a;
   caseopt xo = (unwrap xo : opt _) (type _);
@@ -126,7 +126,7 @@ type ALT =
 };
 Alt :> ALT =
 {
-  type alt a b = wrap (c : type) => (a -> c) -> (b -> c) -> c;
+  type alt a b = wrap ((c : type) => (a -> c) -> (b -> c) -> c);
   left 'a 'b x =
     wrap (fun (c : type) (l : a -> c) (r : b -> c) => l x) : alt a b;
   right 'a 'b x =
@@ -164,7 +164,7 @@ List :> LIST =
 {
   include
   {
-    type list a = wrap (b : type) => b -> (a -> b -> b) -> b;
+    type list a = wrap ((b : type) => b -> (a -> b -> b) -> b);
     nil 'a = wrap (fun (b : type) (n : b) (c : a -> b -> b) => n) : list _;
     cons x xs =
       wrap (fun (b : type) (n : b) (c : _ -> b -> b) =>

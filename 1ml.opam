@@ -7,6 +7,8 @@ bug-reports: "https://github.com/adampsz/1ml/issues"
 depends: [
   "dune" {>= "3.17"}
   "logs"
+  "menhir" {build}
+  "bisect_ppx" {dev}
   "odoc" {with-doc}
 ]
 build: [

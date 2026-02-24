@@ -12,7 +12,7 @@
 
 %token KW_AS       "as"
 %token KW_EXISTS   "exists"
-%token KW_EXTERNAL "external"
+%token KW_EXTERN   "extern"
 %token KW_FORALL   "forall"
 %token KW_IN       "in"
 %token KW_LAMBDA   "lambda"
@@ -240,9 +240,9 @@ expr_atom:
   | x=INT    { Fun.const (EConst (CInt x)) }
   | s=STRING { Fun.const (EConst (CString s)) }
 
-  | x=expr_atom "." l=label               { fun env -> EProj (x env, l) }
-  | "(" "external" id=IDENT ":" t=typ ")" { fun env -> EExternal (id, ttyp (t env)) }
-  | "{" es=expr_record_field_list "}"     { fun env -> ERecord (es env) }
+  | x=expr_atom "." l=label             { fun env -> EProj (x env, l) }
+  | "(" "extern" id=IDENT ":" t=typ ")" { fun env -> EExtern (id, ttyp (t env)) }
+  | "{" es=expr_record_field_list "}"   { fun env -> ERecord (es env) }
 ;
 
 %inline expr_record_field_list:
