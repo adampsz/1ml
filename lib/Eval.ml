@@ -244,9 +244,6 @@ module Eval = struct
       (match Implicit.instantiate (Env.find x env) i with
        | VWrapped v -> Coerce.coerce v c
        | _ -> assert false)
-    | L.Expr.ECoerce (e, c) -> Coerce.coerce (eval env e) c
-    | L.Expr.EInstantiate (e, i) -> Implicit.instantiate (eval env e) i
-    | L.Expr.EGeneralize (g, e) -> Implicit.generalize (eval env e) g
 
   and bind env = function
     | L.Expr.BIncl (_, e, ts, _) ->

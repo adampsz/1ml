@@ -642,9 +642,6 @@ module Expr = struct
     | EExtern of string * Type.t
     | EWrap of (Var.t * Coercion.t) * Type.modu
     | EUnwrap of Var.t * Implicit.inst * Coercion.modu * Type.t
-    | ECoerce of expr * Coercion.t
-    | EInstantiate of expr * Implicit.inst
-    | EGeneralize of Implicit.gen * expr
 
   and modu = EMod of TVar.t * Kind.t option * expr
 

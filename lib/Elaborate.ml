@@ -515,9 +515,6 @@ module Elab = struct
       let e = T.Expr.EVar (Env.find_var x env) in
       let e = Implicit.instantiate e env i in
       Coerce.modu (Sugar.Expr.unwrap e) env c
-    | S.Expr.ECoerce (e, c) -> Coerce.coerce (expr env e) env c
-    | S.Expr.EInstantiate (e, i) -> Implicit.instantiate (expr env e) env i
-    | S.Expr.EGeneralize (g, e) -> Implicit.generalize expr e env g
 
   and modu env (S.Expr.EMod (a, k, e)) =
     let env, _ = Env.enter_mod a k env in
