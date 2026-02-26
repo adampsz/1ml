@@ -544,7 +544,7 @@ module Zipper : sig
   val path : TVar.t -> t -> TVar.t Path.t
   val lam : TVar.t -> Kind.t option -> t -> t
   val field : Var.t -> t -> t
-  val typ : Type.typ -> t -> t
+  val set : Type.typ -> t -> t
   val up : t -> t
   val get : t -> Type.cons option
   val finish : t -> Type.cons option
@@ -569,7 +569,7 @@ end = struct
     | _, Some _ -> invalid_arg "Zipper.record"
   ;;
 
-  let typ t (z, _) = z, Some (Type.CType t)
+  let set t (z, _) = z, Some (Type.CType t)
 
   let rec of_path = function
     | Path.PVar _ -> empty
@@ -605,48 +605,27 @@ end = struct
   let subst a z = Subst.one_opt a (finish z)
 end
 
-module Implicit = struct
-  type inst =
-    | IInst of inst * Type.cons option * Type.t
-    | INil
-
-  and gen =
-    | GGen of Type.modu * gen
-    | GNil
-end
-
-module Coercion = struct
-  type t =
-    | CRefl
-    | CSingleton of Type.modu
-    | CRecord of (Var.t * t) list
-    | CArrow of Type.modu * Effect.t * (Type.cons option * t * modu * Effect.t)
-    | CGeneralize of Implicit.gen * t
-    | CInstantiate of t * Implicit.inst
-
-  and modu = CMod of (TVar.t * Kind.t option) * t * Type.cons option * Type.modu
-end
-
 module Expr = struct
   type expr =
     | EVar of Var.t
     | EConst of Const.t
-    | ECond of Var.t * (modu * Coercion.modu) * (modu * Coercion.modu) * Type.t
+    | ECond of Var.t * expr * expr * Type.t
     | EStruct of (bind list * (Var.t * Type.t) list)
     | EProj of expr * Var.t * Type.t
     | EFun of Var.t * Type.modu * Type.feff * modu
-    | EApp of
-        (Var.t * Implicit.inst) * Type.cons option * Type.feff * (Var.t * Coercion.t)
+    | EApp of expr * Type.cons option * Type.feff * expr
     | EType of Type.modu
-    | ESeal of Var.t * Coercion.t * Type.cons option * Type.t
     | EExtern of string * Type.t
-    | EWrap of (Var.t * Coercion.t) * Type.modu
-    | EUnwrap of Var.t * Implicit.inst * Coercion.modu * Type.t
+    | EWrap of modu * Type.modu
+    | EUnwrap of expr
+    | EInst of expr * Type.cons option * Type.t
+    | EGen of Type.modu * expr
+    | ESeal of modu * Type.cons option * Type.t
 
   and modu = EMod of TVar.t * Kind.t option * expr
 
   and bind =
-    | BVal of Var.t * expr * Implicit.gen
+    | BVal of Var.t * expr
     | BIncl of Surface.vis * expr * (Var.t * Type.t) list * Var.t list
 end
 
@@ -797,80 +776,13 @@ module PP = struct
 
   let zipper ppf zip = cons ppf (Zipper.finish zip)
 
-  let instantiate expr ppf (e, i) =
-    let rec aux ppf = function
-      | e, Implicit.IInst (i, tc, t) ->
-        Format.fprintf ppf "%a@ [%a]@ (...)" aux (e, i) (Precedence.reset cons) tc
-      | e, Implicit.INil _ -> Precedence.left expr ppf e
-    in
-    Precedence.wprintf PEApp Left ppf "@[<2>%a@]" aux (e, i)
-  ;;
-
-  let rec generalize expr ppf = function
-    | Implicit.GGen (TMod (a1, k1, t1), g), e ->
-      let pf = Precedence.wprintf PTArrow Right ppf in
-      let pf = pf "@[<2>∀ %a:@;<1 2>%a.@ @[%s%a@;<1 2>%s %a@]@]" in
-      let pf = pf tvar a1 kind k1 (effect_tick Implicit) typ t1 (effect_arrow Implicit) in
-      pf (generalize expr) (g, e)
-    | Implicit.GNil _, e -> expr ppf e
-  ;;
-
-  let rec coercion : type a. (_ -> a -> _) -> _ -> a * _ -> _ =
-    fun expr ppf (e, c) ->
-    let aux ppf = function
-      | e, Coercion.CRefl -> expr ppf e
-      | _, Coercion.CSingleton t -> Format.fprintf ppf "(type@[<-3>@ %a@])" modu t
-      | _, Coercion.CRecord [] -> Format.pp_print_string ppf "{ }"
-      | e, Coercion.CRecord xs ->
-        let pp_list =
-          let pp_field ppf (x, c) =
-            let expr ppf (e, x) = Format.fprintf ppf "@[<2>%a@,.%a@]" expr e var x in
-            let pf = Format.fprintf ppf "@[<2>%a =@ %a@]" in
-            pf var x (Precedence.reset (coercion expr)) ((e, x), c)
-          and pp_sep ppf _ = Format.fprintf ppf ",@ " in
-          Format.pp_print_list ~pp_sep pp_field
-        in
-        let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
-        Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" pp_list xs br
-      | e, Coercion.CArrow (TMod (a, k, t), eff, (tc, c1, c2, eff')) ->
-        let x = X.next () in
-        let pf = Precedence.wprintf PEFun Right ppf in
-        let pf = pf "@[<2>Λ @[@,%a:@ %a@].@ fun %s(@[<-4>@,%s:@ %a@])@ %s %a@]" in
-        let pf = pf tvar a kind k (effect_tick (Explicit eff)) x typ t in
-        let pp_app ppf () =
-          let pf = Format.fprintf ppf "(@[<1>%a@ [%a]@ %a@])%s" in
-          let pf = pf expr e cons tc in
-          pf (coercion Format.pp_print_string) (x, c1) (effect_sub (Explicit eff'))
-        in
-        pf (effect_arrow (Explicit eff)) (Precedence.right (cmodu pp_app)) ((), c2)
-      | e, Coercion.CGeneralize (g, c) -> generalize (coercion expr) ppf (g, (e, c))
-      | e, Coercion.CInstantiate (c, i) -> instantiate (coercion expr) ppf ((e, c), i)
-    in
-    aux ppf (e, c)
-
-  and cmodu : type a. (_ -> a -> _) -> _ -> a * _ -> _ =
-    fun expr ppf -> function
-    | e, Coercion.CMod ((a', _), c, tc, TMod (a, _, t)) ->
-      let x = X.next () in
-      let pp_pack ppf =
-        let pf = Format.fprintf ppf in
-        let pf = pf "@[<2>pack@ @[%a@]:@ ∃ @[%a@] =@ @[%a@].@;<1 2>@[%a@]@]" in
-        pf (coercion Format.pp_print_string) (x, c) tvar a cons tc typ t
-      in
-      let pp_unpack ppf =
-        let pf = Format.fprintf ppf "@[unpack ⟨%a, %s⟩ =@;<1 2>%a@] in@ %t" in
-        pf tvar a' x expr e pp_pack
-      in
-      pp_unpack ppf
-  ;;
-
   let rec expr ppf = function
     | Expr.EVar x -> var ppf x
     | Expr.EConst c -> Const.pp ppf c
-    | Expr.ECond (x, (e1, c1), (e2, c2), t) ->
+    | Expr.ECond (x, e1, e2, t) ->
       let pp = Format.fprintf ppf in
       let pp = pp "@[<2>if@ @[%a@]@ then@ @[%a@]@ else@ @[%a@]@ :@ @[%a@]@]" in
-      pp var x (cmodu expr_modu) (e1, c1) (cmodu expr_modu) (e2, c2) typ t
+      pp var x expr e1 expr e2 typ t
     | Expr.EStruct ([], []) -> Format.pp_print_string ppf "{ } : { }"
     | Expr.EStruct (xs, ts) ->
       let pp_t_list =
@@ -897,19 +809,26 @@ module PP = struct
       let pf = pf "@[<2>Λ @[@,%a:@ %a@].@ fun %s(@[<-4>@,%a:@ %a@])@ %s %a@]" in
       let pf = pf tvar a kind k (effect_tick eff) var x typ t in
       pf (effect_arrow eff) (Precedence.right expr_modu) e
-    | Expr.EApp ((x1, i1), tc, eff, (x2, c2)) ->
+    | Expr.EApp (e1, tc, eff, x2) ->
       let pf = Format.fprintf ppf "(@[<1>%a@ [%a]@ %a@])%s" in
-      pf (instantiate var) (x1, i1) cons tc (coercion var) (x2, c2) (effect_sub eff)
+      pf expr e1 cons tc expr x2 (effect_sub eff)
     | Expr.EType t -> Format.fprintf ppf "(type@[<-3>@ %a@])" modu t
-    | Expr.ESeal (x, c, tc, t) ->
-      let pf = Format.fprintf ppf "@[<2>%a@ :>@ [%a]@ (%a)@]" in
-      pf (coercion var) (x, c) cons tc typ t
     | Expr.EExtern (s, t) -> Format.fprintf ppf "(@[<2>extern %s:@ @[%a@]@])" s typ t
-    | Expr.EWrap ((e, _), t) -> Format.fprintf ppf "wrap (%a) : (%a)" var e modu t
-    | Expr.EUnwrap (e, _, _, t) -> Format.fprintf ppf "unwrap (%a) : (%a)" var e typ t
+    | Expr.EWrap (e, t) -> Format.fprintf ppf "wrap (%a) : (%a)" expr_modu e modu t
+    | Expr.EUnwrap e -> Format.fprintf ppf "unwrap (%a)" expr e
+    | Expr.EInst (e, tc, t) ->
+      let pf = Precedence.wprintf PEApp Left ppf "@[<2>%a@ [%a]@ (%a)@]" in
+      pf expr e (Precedence.reset cons) tc typ t
+    | EGen (TMod (a1, k1, t1), e) ->
+      let pf = Precedence.wprintf PTArrow Right ppf in
+      let pf = pf "@[<2>∀ %a:@;<1 2>%a.@ @[%s%a@;<1 2>%s %a@]@]" in
+      let pf = pf tvar a1 kind k1 (effect_tick Implicit) typ t1 (effect_arrow Implicit) in
+      pf expr e
+    | Expr.ESeal (e, tc, t) ->
+      Format.fprintf ppf "(%a :>[%a] %a)" expr_modu e cons tc typ t
 
   and bind ppf = function
-    | Expr.BVal (x, e, _) -> Format.fprintf ppf "@[<2>%a =@ %a@]" var x expr e
+    | Expr.BVal (x, e) -> Format.fprintf ppf "@[<2>%a =@ %a@]" var x expr e
     | Expr.BIncl (Public, e, _, _) -> Format.fprintf ppf "@[<2>include@ %a@]" expr e
     | Expr.BIncl (Private, e, _, _) -> Format.fprintf ppf "@[<2>open@ %a@]" expr e
 

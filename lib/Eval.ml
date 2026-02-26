@@ -66,31 +66,6 @@ end = struct
   let extern s (_, extern) = extern s
 end
 
-module Implicit = struct
-  let rec materialize t =
-    match L.Type.view t with
-    | L.Type.TPrim PUnit -> Value.VConst (CUnit ())
-    | L.Type.TArrow (_, _, TMod (_, _, t)) -> Value.VFunction (fun _ -> materialize t)
-    | L.Type.TRecord ts -> Value.VRecord (List.map (fun (x, t) -> x, materialize t) ts)
-    | L.Type.TSingleton _ -> VSingleton
-    | L.Type.TWrapped (TMod (_, _, t)) -> VWrapped (materialize t)
-    | _ -> assert false
-  ;;
-
-  let rec generalize v = function
-    | L.Implicit.GNil _ -> v
-    | L.Implicit.GGen (_, g) -> Value.VFunction (fun _ -> generalize v g)
-  ;;
-
-  let rec instantiate v = function
-    | L.Implicit.INil _ -> v
-    | L.Implicit.IInst (i, _, t) ->
-      (match v with
-       | Value.VFunction f -> instantiate (f (materialize t)) i
-       | _ -> assert false)
-  ;;
-end
-
 module Extern = struct
   open Value.Convert
 
@@ -185,77 +160,22 @@ module Extern = struct
   end
 end
 
-module Coerce = struct
-  let rec coerce v = function
-    | L.Coercion.CRefl -> v
-    | L.Coercion.CSingleton _ -> Value.VSingleton
-    | L.Coercion.CGeneralize (g, c) -> Implicit.generalize (coerce v c) g
-    | L.Coercion.CInstantiate (c, i) -> coerce (Implicit.instantiate v i) c
-    | L.Coercion.CRecord cs ->
-      (match v with
-       | VRecord vs ->
-         let aux (x, c) = x, coerce (L.Var.assoc (L.Var.name x) vs |> snd) c in
-         Value.VRecord (List.map aux cs)
-       | _ -> assert false)
-    | L.Coercion.CArrow (_, _, (_, c1, CMod (_, c2, _, _), _)) ->
-      (match v with
-       | VFunction f -> VFunction (fun v -> coerce (f (coerce v c1)) c2)
-       | _ -> assert false)
-  ;;
-end
-
 module Eval = struct
+  let rec materialize t =
+    match L.Type.view t with
+    | L.Type.TPrim PUnit -> Value.VConst (CUnit ())
+    | L.Type.TArrow (_, _, TMod (_, _, t)) -> Value.VFunction (fun _ -> materialize t)
+    | L.Type.TRecord ts -> Value.VRecord (List.map (fun (x, t) -> x, materialize t) ts)
+    | L.Type.TSingleton _ -> VSingleton
+    | L.Type.TWrapped (TMod (_, _, t)) -> VWrapped (materialize t)
+    | _ -> assert false
+  ;;
+
   let rec eval env expr =
     trace
       (fun m -> m ~header:"eval" "%a" L.PP.expr expr)
       (fun r m -> m ~header:"eval" "= %a" Value.pp r)
-    @@ fun () ->
-    match expr with
-    | L.Expr.EVar x -> Env.find x env
-    | L.Expr.EConst c -> Value.VConst c
-    | L.Expr.ECond (x, e1, e2, _) ->
-      let L.Expr.EMod (_, _, e1), L.Coercion.CMod (_, c1, _, _) = e1
-      and L.Expr.EMod (_, _, e2), L.Coercion.CMod (_, c2, _, _) = e2 in
-      (match Env.find x env with
-       | VConst (CBool true) -> Coerce.coerce (eval env e1) c1
-       | VConst (CBool false) -> Coerce.coerce (eval env e2) c2
-       | _ -> assert false)
-    | L.Expr.EStruct (bs, _) ->
-      let _, xs = List.fold_left_map bind env bs in
-      Value.VRecord (List.concat xs)
-    | L.Expr.EProj (e, x, _) ->
-      (match eval env e with
-       | VRecord xs -> List.assoc x xs
-       | _ -> assert false)
-    | L.Expr.EFun (x, _, _, EMod (_, _, e)) ->
-      VFunction (fun v -> eval (Env.add x v env) e)
-    | L.Expr.EApp ((x1, i1), _, _, (x2, c2)) ->
-      (match Implicit.instantiate (Env.find x1 env) i1 with
-       | VFunction f -> f (Coerce.coerce (Env.find x2 env) c2)
-       | _ -> assert false)
-    | L.Expr.EType _ -> VSingleton
-    | L.Expr.ESeal (x, c, _, _) -> Coerce.coerce (Env.find x env) c
-    | L.Expr.EExtern (s, _) ->
-      (match Env.extern s env with
-       | Some v -> v
-       | None -> assert false)
-    | L.Expr.EWrap ((x, c), _) -> VWrapped (Coerce.coerce (Env.find x env) c)
-    | L.Expr.EUnwrap (x, i, CMod (_, c, _, _), _) ->
-      (match Implicit.instantiate (Env.find x env) i with
-       | VWrapped v -> Coerce.coerce v c
-       | _ -> assert false)
-
-  and bind env = function
-    | L.Expr.BIncl (_, e, ts, _) ->
-      (match eval env e with
-       | VRecord vs ->
-         let env = List.fold_left (fun env (x, v) -> Env.add x v env) env vs in
-         env, List.map (fun (x, _) -> L.Var.assoc (L.Var.name x) vs) ts
-       | _ -> assert false)
-    | L.Expr.BVal (x, e, g) ->
-      let v = Implicit.generalize (eval env e) g in
-      let env = Env.add x v env in
-      env, [ x, v ]
+    @@ fun () -> failwith "todo"
   ;;
 
   let modu env (L.Expr.EMod (_, _, e)) = eval env e

@@ -8,7 +8,7 @@ module Implicit = struct
   let wrap = T.Type.wrap
 
   let rec concretize env = function
-    | T.Kind.KType -> T.Type.CType (T.Type.TInfer (T.UVar.fresh env) |> wrap)
+    | T.Kind.KType -> T.Type.CType (TInfer (T.UVar.fresh env) |> wrap)
     | T.Kind.KArrow (k1, k2) ->
       let x = T.TVar.fresh () in
       T.Type.CLam (x, Some k1, concretize (T.TVar.Set.add x env) k2)
@@ -25,7 +25,7 @@ module Implicit = struct
         let t1 = T.Type.TMod (T.TVar.null, None, TInfer z |> wrap) in
         let t1 = T.Type.TMod (a, k, TSingleton t1 |> wrap)
         and t2 = T.Type.TMod (T.TVar.null, None, snd acc) in
-        T.Implicit.GGen (t1, fst acc), T.Type.TArrow (t1, Implicit, t2) |> wrap
+        (fun e -> T.Expr.EGen (t1, fst acc e)), T.Type.TArrow (t1, Implicit, t2) |> wrap
       | T.Type.TInfer _ -> acc
       | T.Type.TAbstr p -> path acc p
       | T.Type.TPrim _ -> acc
@@ -43,7 +43,7 @@ module Implicit = struct
       | T.Type.CLam (_, _, t) -> cons acc t
       | T.Type.CRecord ts -> List.fold_left (fun xs (_, t) -> cons xs t) acc ts
     in
-    typ (T.Implicit.GNil, t) t
+    typ (Fun.id, t) t
   ;;
 
   let _instantiate env t =
@@ -53,21 +53,19 @@ module Implicit = struct
         let tc = Option.map (concretize env) k1 in
         let t1 = T.Subst.typ (T.Subst.one_opt a1 tc) t1
         and t2 = T.Subst.typ (T.Subst.one_opt a1 tc) t2 in
-        aux (T.Implicit.IInst (inst, tc, t1), t2)
+        aux ((fun e -> T.Expr.EInst (inst e, tc, t1)), t2)
       | _ -> inst, t
     in
-    aux (T.Implicit.INil, t)
+    aux (Fun.id, t)
   ;;
 
   let instantiate env t =
     let inst, t = _instantiate env t in
-    if inst != INil then debug (fun m -> m ~header:"instantiate" "%a" T.PP.typ t);
     inst, t
   ;;
 
   let generalize level t =
     let gen, t = _generalize level t in
-    if gen != GNil then debug (fun m -> m ~header:"generalize" "%a" T.PP.typ t);
     gen, t
   ;;
 end
@@ -78,21 +76,23 @@ module Subtype = struct
   let view = T.Type.view
   let wrap = T.Type.wrap
 
+  module Env = struct
+    type t =
+      { tvar : T.TVar.t
+      ; tvars : T.TVar.Set.t
+      }
+
+    let of_path path tvars = { tvar = T.Path.var path; tvars }
+    let enter_mod a env = { env with tvar = a }, T.Zipper.empty
+    let add a env = { env with tvars = T.TVar.Set.add a env.tvars }
+    let domain env = env.tvars
+    let path env zip = T.Zipper.path env.tvar zip
+    let subst env zip = T.Zipper.subst env.tvar zip
+  end
+
   exception SubtypeError of string * T.Type.t * T.Type.t
 
-  let subst_arrow_arg a zip (T.Type.TMod (a1, k1, t1)) =
-    T.Type.TMod (a1, k1, T.Subst.typ (T.Zipper.subst a zip) t1)
-  ;;
-
-  let rec generalize typ env t =
-    match view t with
-    | T.Type.TArrow (TMod (a1, k1, t1), Implicit, TMod (_, _, t2)) ->
-      let zip, g, c = generalize typ (T.TVar.Set.add a1 env) t2 in
-      zip, T.Implicit.GGen (TMod (a1, k1, t1), g), c
-    | _ ->
-      let zip, c = typ env t in
-      zip, T.Implicit.GNil, c
-  ;;
+  let uvar env = TInfer (T.UVar.fresh (Env.domain env)) |> wrap
 
   (**
     Subtyping rule [Γ ⊢ t′ ≤ t].
@@ -105,155 +105,164 @@ module Subtype = struct
     When subtyping succedes, it returns a substitution [s] that can be applied
     to the type variable in [path] to make it a concrete supertype of [t'].
   *)
-  let rec typ a zip env t' t =
+  let rec typ (env, zip) (k', t') t =
     trace
-      (fun m -> m ~header:"subtype" "%a <= %a" T.PP.typ t' T.PP.typ t)
-      (fun (zip, c) m ->
-         let pf = m ~header:"subtype" "%a ↦ %a, %a" in
-         pf T.PP.tvar a T.PP.zipper zip (T.PP.coercion Format.pp_print_string) ("x", c))
+      (fun m ->
+         let pf = m ~header:"subtype" "%a <= %a at %a" in
+         pf T.PP.typ t' T.PP.typ t (T.PP.path T.PP.tvar) (Env.path env zip))
+      (fun (zip, f) m ->
+         let pf = m ~header:"subtype" "~> %a, λX. %a" in
+         pf T.PP.zipper zip T.PP.expr (f (T.Expr.EVar (T.Var.fresh "X"))))
     @@ fun () ->
     match view t', view t with
     (* Implicit functions *)
-    | _, TArrow (_, Implicit, _) ->
-      let zip, g, c = generalize (fun env t -> typ a zip env t' t) env t in
-      zip, T.Coercion.CGeneralize (g, c)
+    | _, T.Type.TArrow (TMod (a1, k1, t1), Implicit, TMod (_, _, t2)) ->
+      let zip, f = typ (Env.add a1 env, zip) (k', t') t2 in
+      zip, fun e -> T.Expr.EGen (TMod (a1, k1, t1), f e)
     | TArrow (_, Implicit, _), _ ->
-      let inst, t' = Implicit.instantiate env t' in
-      let zip, c = typ a zip env t' t in
-      zip, T.Coercion.CInstantiate (c, inst)
+      let inst, t' = Implicit.instantiate (Env.domain env) t' in
+      let zip, f = typ (env, zip) (k', t') t in
+      zip, fun e -> f (inst e)
     (* Unification *)
     | TInfer z', TRecord xs ->
-      let zs' = List.map (fun (x, _) -> x, TInfer (T.UVar.fresh env) |> wrap) xs in
-      let t' = wrap (TRecord zs') in
+      let t' = wrap (TRecord (List.map (fun (x, _) -> x, uvar env) xs)) in
       assert (T.Type.resolve z' t');
-      typ a zip env t' t
+      typ (env, zip) (k', t') t
     | TRecord xs', TInfer z ->
-      let zs = List.map (fun (x', _) -> x', TInfer (T.UVar.fresh env) |> wrap) xs' in
-      let t = wrap (TRecord zs) in
+      let t = wrap (TRecord (List.map (fun (x', _) -> x', uvar env) xs')) in
       assert (T.Type.resolve z t);
-      typ a zip env t' t
+      typ (env, zip) (k', t') t
     | TInfer z', TArrow (TMod (_, None, _), Explicit Impure, TMod (_, None, _)) ->
-      let t1' = T.Type.TMod (T.TVar.null, None, TInfer (T.UVar.fresh env) |> wrap)
-      and t2' = T.Type.TMod (T.TVar.null, None, TInfer (T.UVar.fresh env) |> wrap)
-      and eff' = T.Type.Explicit Impure in
-      let t' = TArrow (t1', eff', t2') |> wrap in
+      let t1' = T.Type.TMod (T.TVar.null, None, uvar env)
+      and t2' = T.Type.TMod (T.TVar.null, None, uvar env) in
+      let t' = TArrow (t1', Explicit Impure, t2') |> wrap in
       assert (T.Type.resolve z' t');
-      typ a zip env t' t
+      typ (env, zip) (k', t') t
     | TArrow (TMod (_, None, _), Explicit _, TMod (_, None, _)), TInfer z ->
-      let t1 = T.Type.TMod (T.TVar.null, None, TInfer (T.UVar.fresh env) |> wrap)
-      and t2 = T.Type.TMod (T.TVar.null, None, TInfer (T.UVar.fresh env) |> wrap)
-      and eff = T.Type.Explicit Impure in
-      let t = TArrow (t1, eff, t2) |> wrap in
+      let t1 = T.Type.TMod (T.TVar.null, None, uvar env)
+      and t2 = T.Type.TMod (T.TVar.null, None, uvar env) in
+      let t = TArrow (t1, Explicit Impure, t2) |> wrap in
       assert (T.Type.resolve z t);
-      typ a zip env t' t
+      typ (env, zip) (k', t') t
     | TInfer z, t | t, TInfer z ->
       if T.Type.resolve z (wrap t)
-      then zip, T.Coercion.CRefl
+      then zip, Fun.id
       else raise (SubtypeError ("infer", wrap (TInfer z), wrap t))
     (* Subtyping *)
-    | TAbstr p', TAbstr p when T.Path.equal (equal a zip env) p' p ->
-      zip, T.Coercion.CRefl
+    | TAbstr p', TAbstr p when T.Path.equal (equal env zip) p' p -> zip, Fun.id
     (* TODO: Guard against infinite recursion here *)
-    | t', TAbstr _ -> typ a zip env (wrap t') (T.Subst.typ (T.Zipper.subst a zip) t)
+    | t', TAbstr _ -> typ (env, zip) (k', wrap t') (T.Subst.typ (Env.subst env zip) t)
     | TAbstr _, _ -> raise (SubtypeError ("abstr", t', t))
-    | TPrim p', TPrim p when T.Prim.equal p' p -> zip, T.Coercion.CRefl
+    | TPrim p', TPrim p when T.Prim.equal p' p -> zip, Fun.id
     | TPrim _, _ -> raise (SubtypeError ("prim", t', t))
     | TRecord xs', TRecord xs ->
+      let ks' =
+        match k' with
+        | None -> []
+        | Some (T.Kind.KRecord ks') -> ks'
+        | _ -> assert false
+      in
       let aux zip (x, t) =
-        let t' =
+        let x', t' =
           match T.Var.assoc_opt (T.Var.name x) xs' with
-          | Some (_, t') -> t'
+          | Some (x', t') -> x', t'
           | None ->
             let t', t = TRecord xs' |> wrap, TRecord xs |> wrap in
             let n = T.Var.name x in
             raise (SubtypeError (Printf.sprintf "record field %s" n, t', t))
         in
-        let zip, c = typ a (T.Zipper.field x zip) env t' t in
-        T.Zipper.up zip, (x, c)
+        let zip, c = typ (env, T.Zipper.field x zip) (List.assoc_opt x' ks', t') t in
+        T.Zipper.up zip, T.Expr.BVal (x, c (EVar x'))
       in
-      let zip, xs = List.fold_left_map aux zip xs in
-      zip, T.Coercion.CRecord xs
+      let zip, bs = List.fold_left_map aux zip xs in
+      let xs = List.map (fun (x, t) -> x, T.Subst.typ (Env.subst env zip) t) xs in
+      let f e =
+        let b = T.Expr.BIncl (Private, e, xs', List.map fst ks') in
+        let tmp = T.Var.fresh "tmp" in
+        (* TODO: this is only a temporary hack, there should be only a single struct and not tmp variable *)
+        T.Expr.EStruct
+          ([ b; BVal (tmp, EStruct (bs, xs)); BIncl (Public, EVar tmp, xs, []) ], xs)
+      in
+      zip, f
     | TRecord _, _ -> raise (SubtypeError ("record", t', t))
     (*
        Γ,a₁ ⊢ t₁ ≤ ∃α₁′. t₁′ ↑ tₐ     Γ,a₁ ⊢ (∃a₂′. t₂′)[tₐ/a₁′] ≤ (∃a₂. t₂)
       ----------------------------------------------------------------------
        Γ ⊢ (∀a₁′. t₁′ →ͺ∃a₂'. t₂′) ≤ (∀α₁.t₁ →ͺ∃a₂. t₂)
     *)
-    | ( TArrow ((TMod (a1', _, _) as t1'), Explicit eff', t2')
-      , TArrow ((TMod (a1, _, _) as t1), Explicit eff, t2) )
+    | ( TArrow (TMod (a1', _, t1'), Explicit eff', t2')
+      , TArrow (TMod (a1, k1, t1), Explicit eff, t2) )
       when T.Effect.sub eff' eff ->
-      let env = T.TVar.Set.add a1 env in
-      let t1 = subst_arrow_arg a zip t1 in
-      let (T.Coercion.CMod ((_, _), c1, tc1, _)) = modu env t1 t1' in
+      let env = Env.add a1 env in
+      let t1 = T.Subst.typ (Env.subst env zip) t1 in
+      let x1 = T.Var.fresh "tmp" in
+      let tc1, f1 =
+        let zip, f1 = typ (Env.enter_mod a1' (Env.add a1 env)) (k1, t1) t1' in
+        T.Zipper.finish zip, f1
+      in
       let t2' = T.Subst.modu (T.Subst.one_opt a1' tc1) t2' in
-      (match eff with
-       | Pure ->
-         let TMod (a1, k1, _), TMod (_, _, t2'), TMod (_, _, t2) = t1, t2', t2 in
-         let zip = T.Zipper.lam a1 k1 zip in
-         let zip, c2 = typ a zip env t2' t2 in
-         let c2 =
-           let null = T.TVar.null in
-           debug (fun m ->
-             m
-               "(%a)[%a/%a]"
-               (Format.with_max_boxes 1000 T.PP.typ)
-               t2
-               (Format.with_max_boxes 1000 T.PP.zipper)
-               zip
-               T.PP.tvar
-               a);
-           let t2 = T.Subst.typ (T.Zipper.subst a zip) t2 in
-           T.Coercion.CMod ((null, None), c2, None, TMod (null, None, t2))
-         in
-         T.Zipper.up zip, T.Coercion.CArrow (t1, eff, (tc1, c1, c2, eff'))
-       | Impure ->
-         let c2 = modu env t2' (T.Subst.modu (T.Zipper.subst a zip) t2) in
-         zip, T.Coercion.CArrow (t1, eff, (tc1, c1, c2, eff')))
+      let zip, f2 =
+        match eff with
+        | Impure -> zip, modu env t2' (T.Subst.modu (Env.subst env zip) t2)
+        | Pure ->
+          let TMod (_, _, t2'), TMod (a2, k2, t2) = t2', t2 in
+          let k2' =
+            match k' with
+            | None -> None
+            | Some (T.Kind.KArrow (_, k2')) -> Some k2'
+            | _ -> assert false
+          in
+          let zip, f2 = typ (env, T.Zipper.lam a1 k1 zip) (k2', t2') t2 in
+          T.Zipper.up zip, fun (T.Expr.EMod (_, _, e)) -> T.Expr.EMod (a2, k2, f2 e)
+      in
+      let f e =
+        let (TMod (a2', k2', _)) = t2' in
+        let e = T.Expr.EApp (e, tc1, Explicit eff', f1 (EVar x1)) in
+        let e = f2 (EMod (a2', k2', e)) in
+        T.Expr.EFun (x1, TMod (a1, k1, t1), Explicit eff, e)
+      in
+      zip, f
     | TArrow _, _ -> raise (SubtypeError ("arrow", t', t))
     | TSingleton (TMod (_, None, t')), TSingleton (TMod (_, None, t))
-      when T.Type.is_path (T.Zipper.path a zip) t && T.Type.is_small t' ->
-      T.Zipper.typ t' zip, T.Coercion.CRefl
+      when T.Type.is_path (Env.path env zip) t && T.Type.is_small t' ->
+      T.Zipper.set t' zip, Fun.id
     | TSingleton t', TSingleton t ->
-      let t = T.Subst.modu (T.Zipper.subst a zip) t in
-      let _, _ = modu env t' t, modu env t t' in
-      zip, T.Coercion.CSingleton t
+      let t = T.Subst.modu (Env.subst env zip) t in
+      let _ = modu env t' t, modu env t t' in
+      zip, Fun.const (T.Expr.EType t)
     | TWrapped t', TWrapped t ->
-      let t = T.Subst.modu (T.Zipper.subst a zip) t in
-      let _, _ = modu env t' t, modu env t t' in
-      zip, T.Coercion.CRefl
+      let t = T.Subst.modu (Env.subst env zip) t in
+      let _ = modu env t' t, modu env t t' in
+      zip, Fun.id
     | TSingleton _, _ -> raise (SubtypeError ("singleton", t', t))
     | TWrapped _, _ -> raise (SubtypeError ("wrap", t', t))
 
   (**
-    Matching rule [Γ ⊢ t′ ≤ ∃a. t ↑ tₐ].
-
-    This matches a concrete type [t'] agains an abstract type [∃a. t].
-   *)
-  and matches env t' (T.Type.TMod (a, k, t)) =
-    let zip, c = typ a T.Zipper.empty env t' t in
-    let tc = T.Zipper.finish zip in
-    tc, c, T.Type.TMod (a, k, t)
-
-  (**
     Subtyping rule [Γ ⊢ t′ ≤ ∃a. t]
    *)
-  and modu env (T.Type.TMod (a', k', t')) t =
-    let tc, c, t = matches (T.TVar.Set.add a' env) t' t in
-    T.Coercion.CMod ((a', k'), c, tc, t)
+  and modu env (TMod (a', k', t')) (TMod (a, k, t)) =
+    let zip, f = typ (Env.enter_mod a (Env.add a' env)) (k', t') t in
+    fun (T.Expr.EMod (_, _, e)) ->
+      T.Expr.EMod (a, k, T.Expr.ESeal (T.Expr.EMod (a', k', f e), T.Zipper.get zip, t))
 
-  and equal a zip env t' t =
+  and modu_typ path env (T.Type.TMod (a', k', t')) t =
+    let env = Env.add a' (Env.of_path path env) in
+    let zip, f =
+      typ (Env.of_path path (Env.domain env), T.Zipper.of_path path) (k', t') t
+    in
+    fun (T.Expr.EMod (a, k, e)) ->
+      T.Expr.ESeal (T.Expr.EMod (a, k, f e), T.Zipper.get zip, t)
+
+  and equal env zip t' t =
     match t', t with
     | CType t', CType t ->
       (try
-         let _, _ = typ a zip env t' t, typ a zip env t t' in
+         let _, _ = typ (env, zip) (None, t') t, typ (env, zip) (None, t) t' in
          true
        with
        | SubtypeError _ -> false)
     | _, _ -> failwith "todo: equality"
   ;;
-
-  (* Public interface that correcly initializes the zipper and then deconstructs it into complete type *)
-  let typ path env t' t = typ (T.Path.var path) (T.Zipper.of_path path) env t' t
 
   let _ =
     let fmt = Format.asprintf "mismstch in %s between %a and %a" in
@@ -329,10 +338,11 @@ module Check = struct
     val add_record : (T.Var.t * T.Type.t) list -> t -> t
     val find : string -> t -> T.Var.t * T.Type.t
     val enter_mod : T.TVar.t -> t -> t
-    val enter_arrow : T.TVar.t -> T.Kind.t option -> t -> t
+    val enter_lam : T.TVar.t -> T.Kind.t option -> t -> t
     val enter_field : T.Var.t -> t -> t
     val path : t -> T.TVar.t T.Path.t
     val domain : t -> T.TVar.Set.t
+    val subtype : t -> Subtype.Env.t * T.Zipper.t
   end = struct
     type t =
       { path : T.TVar.t T.Path.t
@@ -356,10 +366,11 @@ module Check = struct
     ;;
 
     let enter_mod a env = { (add_tvar a env) with path = T.Path.PVar a }
-    let enter_arrow a k env = { env with path = PApp (env.path, a, k) }
+    let enter_lam a k env = { env with path = PApp (env.path, a, k) }
     let enter_field x env = { env with path = PProj (env.path, x) }
     let domain env = env.tvars
     let path env = env.path
+    let subtype env = Subtype.Env.of_path env.path env.tvars, T.Zipper.of_path env.path
   end
 
   let rec proj xs t =
@@ -436,9 +447,9 @@ module Check = struct
       let k, t = typ env t in
       let xs, t_ = proj xs t in
       let env_ = List.fold_left (fun e x -> Env.enter_field x e) env xs in
-      let k'_, t_' = typ env_ t_' in
-      let zip, _ = Subtype.typ (Env.path env_) (Env.domain env) t_' t_ in
-      set_kind xs k'_ k, T.Subst.typ (T.Zipper.subst (T.Path.var (Env.path env)) zip) t
+      let k_', t_' = typ env_ t_' in
+      let zip, _ = Subtype.typ (Env.subtype env_) (k_', t_') t_ in
+      set_kind xs k_' k, T.Subst.typ (T.Zipper.subst (T.Path.var (Env.path env)) zip) t
     | S.TStruct xs ->
       let _, xs = List.fold_left_map decl env xs in
       let ks = List.concat_map (fun (ks, _) -> ks) xs
@@ -453,7 +464,7 @@ module Check = struct
     | S.TArrow (x, t1, eff, T.Effect.Pure, t2) ->
       let (T.Type.TMod (a1, k1, _) as t1) = modu_typ env t1 in
       let env = Env.add_mod (T.Var.fresh (S.Node.data x)) t1 env in
-      let k2, t2 = typ (Env.enter_arrow a1 k1 env) t2 in
+      let k2, t2 = typ (Env.enter_lam a1 k1 env) t2 in
       let eff = if eff = Implicit then T.Type.Implicit else T.Type.Explicit Pure in
       T.Kind.arrow k1 k2, T.Type.TArrow (t1, eff, TMod (T.TVar.null, None, t2)) |> wrap
     | S.TSingletonType t ->
@@ -510,13 +521,12 @@ module Check = struct
        | _ -> failwith "todo");
       let eff1, t1, e1 = modu_expr env e1
       and eff2, t2, e2 = modu_expr env e2
-      and t = modu_typ env t in
-      let c1 = Subtype.modu (Env.domain env) t1 t
-      and c2 = Subtype.modu (Env.domain env) t2 t in
-      let k, t = path_prepend env t in
+      and k, t = typ env t in
+      let f1 = Subtype.modu_typ (Env.path env) (Env.domain env) t1 t
+      and f2 = Subtype.modu_typ (Env.path env) (Env.domain env) t2 t in
       let eff = T.Kind.eff k in
       let eff = T.Effect.join eff (T.Effect.join eff1 eff2) in
-      k, eff, t, T.Expr.ECond (x, (e1, c1), (e2, c2), t)
+      k, eff, t, T.Expr.ECond (x, f1 e1, f2 e2, t)
     | S.EStruct xs ->
       let _, xs = List.fold_left_map bind env xs in
       let tcs = List.concat_map (fun (ks, _, _, _) -> ks) xs
@@ -558,7 +568,7 @@ module Check = struct
       let dom = Env.domain env in
       let x, t = Env.find (S.Node.data x) env in
       let inst, t = Implicit.instantiate dom t in
-      let TMod (a1, k1, t1), eff, t2 =
+      let TMod (a1, _, t1), eff, t2 =
         match view t with
         | T.Type.TArrow (t1, T.Type.Explicit eff, t2) -> t1, eff, t2
         | T.Type.TInfer z ->
@@ -570,18 +580,23 @@ module Check = struct
         | _ -> failwith "todo error expected function"
       in
       let x', t1' = Env.find (S.Node.data x') env in
-      let tc, c, _ = Subtype.matches dom t1' (TMod (a1, k1, t1)) in
-      let t2 = T.Subst.modu (T.Subst.one_opt a1 tc) t2 in
-      let k2, t2 = path_prepend env t2 in
-      k2, eff, t2, T.Expr.EApp ((x, inst), tc, Explicit eff, (x', c))
+      let tc, f =
+        let env, _ = Env.subtype env in
+        let zip, f = Subtype.typ (Subtype.Env.enter_mod a1 env) (None, t1') t1 in
+        T.Zipper.finish zip, f
+      in
+      let k2, t2 = path_prepend env (T.Subst.modu (T.Subst.one_opt a1 tc) t2) in
+      let e = T.Expr.EApp (inst (EVar x), tc, Explicit eff, f (EVar x')) in
+      k2, eff, t2, e
     | S.EType t ->
       let t = modu_typ env t in
       None, T.Effect.Pure, T.Type.TSingleton t |> wrap, T.Expr.EType t
     | S.ESeal (x, t) ->
       let x, t' = Env.find (S.Node.data x) env
       and k, t = typ env t in
-      let zip, c = Subtype.typ (Env.path env) (Env.domain env) t' t in
-      k, T.Kind.eff k, t, T.Expr.ESeal (x, c, T.Zipper.get zip, t)
+      let zip, c = Subtype.typ (Env.subtype env) (None, t') t in
+      let e = T.Expr.ESeal (EMod (T.TVar.null, None, c (EVar x)), T.Zipper.get zip, t) in
+      k, T.Kind.eff k, t, e
     | S.EWrap (x, t) ->
       let k, t = typ env t in
       let t =
@@ -592,10 +607,10 @@ module Check = struct
           let s = s T.PP.typ (wrap t) in
           failwith s
       in
-      let dom = Env.domain env in
       let x, t' = Env.find (S.Node.data x) env in
-      let _, c, _ = Subtype.matches dom t' t in
-      None, T.Effect.Pure, T.Type.TWrapped t |> wrap, T.Expr.EWrap ((x, c), t)
+      let f = Subtype.modu (Env.subtype env |> fst) (TMod (T.TVar.null, None, t')) t in
+      let e = T.Expr.EWrap (f (EMod (T.TVar.null, None, EVar x)), t) in
+      None, T.Effect.Pure, T.Type.TWrapped t |> wrap, e
     | S.EUnwrap (x, t) ->
       let dom = Env.domain env in
       let x, t1 = Env.find (S.Node.data x) env in
@@ -614,9 +629,11 @@ module Check = struct
           t2
         | _ -> failwith "todo error expected wrapped type"
       in
-      let c = Subtype.modu dom t1 t2 in
       let k2, t2 = path_prepend env t2 in
-      k2, T.Kind.eff k2, t2, T.Expr.EUnwrap (x, inst, c, t2)
+      let f = Subtype.modu_typ (Env.path env) (Env.domain env) t1 t2 in
+      let (TMod (a, k, _)) = t1 in
+      let e = f (EMod (a, k, T.Expr.EUnwrap (inst (EVar x)))) in
+      k2, T.Kind.eff k2, t2, e
     | S.EExtern (x, t) ->
       let k, t = typ env t in
       k, T.Kind.eff k, t, T.Expr.EExtern (x, t)
@@ -635,7 +652,7 @@ module Check = struct
       let k, eff, t, e = expr (Env.enter_field x env) e in
       let ks = Option.fold ~none:[] ~some:(fun k -> [ x, k ]) k in
       let gen, t = Implicit.generalize level t in
-      Env.add x t env, (ks, eff, [ x, t ], T.Expr.BVal (x, e, gen))
+      Env.add x t env, (ks, eff, [ x, t ], T.Expr.BVal (x, gen e))
     | S.BIncl (vis, e) ->
       let k, eff, t, e = expr env e in
       let ks, ts =
