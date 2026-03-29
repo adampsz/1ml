@@ -1,3 +1,5 @@
+(* @prelude *)
+
 log = {
     type text = extern "string";
     log s = (extern "Text.print": text -> ()) ((extern "Text.++": text -> text -> text) s "\n");

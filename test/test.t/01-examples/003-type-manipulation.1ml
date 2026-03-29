@@ -1,0 +1,8 @@
+typeof 'a (_: a) = a;
+
+arg 'a (_: (= type a -> _)) = a;
+ret 'a (_: (= type _ -> a)) = a;
+
+apply f (x: arg (typeof f)): ret (typeof f) = f x;
+
+do Assert.ok (apply (fun x => x) true);

@@ -321,6 +321,8 @@ module Type = struct
     | S.Type.TWrapped t -> Ex (Sugar.Type.wrap (modu env t))
 
   and modu env (TMod (a, k, t)) =
+    (* let kk = S.Type.kind (PVar a) t in
+    assert (S.Kind.equal k kk); *)
     let env, a = Env.enter_mod a k env in
     Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t)
 

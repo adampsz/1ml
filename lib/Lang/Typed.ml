@@ -281,13 +281,6 @@ module Path = struct
     | PApp (p, a, k) -> PApp (prepend p' p, a, k)
   ;;
 
-  let rec proj x = function
-    | PProj (PVar a, x') when Var.equal x x' -> PVar a
-    | PVar _ -> invalid_arg "Path.proj"
-    | PProj (p, x') -> PProj (proj x p, x')
-    | PApp (p, x', k) -> PApp (proj x p, x', k)
-  ;;
-
   module Rev = struct
     type 'a rpath =
       | RPNil

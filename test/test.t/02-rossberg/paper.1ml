@@ -1,3 +1,5 @@
+(* @prelude ./prelude.1ml *)
+
 (* Examples from the 1ML paper
  * (assumes prelude.1ml)
  *

@@ -1,3 +1,5 @@
+(executable
+ (name runner))
+
 (cram
- (deps
-  %{bin:1ml}))
+ (deps ./runner.exe %{bin:1ml}))

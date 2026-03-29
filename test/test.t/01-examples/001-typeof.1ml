@@ -1,0 +1,25 @@
+typeof 'a (_: a) = a;
+
+int = typeof 42;
+char = typeof '?';
+string = typeof "abc";
+
+_ :> int = 123;
+_ :> char = '!';
+_ :> string = "Hello";
+
+user = typeof {
+  id = 123;
+  name = "John";
+  login = "john";
+  password = "john123";
+  admin = false;
+};
+
+admin :> user = {
+  id = 0;
+  name = "Administrator";
+  login = "admin";
+  password = "admin";
+  admin = true;
+};

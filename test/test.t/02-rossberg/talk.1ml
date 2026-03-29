@@ -1,3 +1,5 @@
+(* @prelude ./prelude.1ml *)
+
 (* Types as modules *)
 
 M1 = {type t = int} : {type t = int} :> {type t};
