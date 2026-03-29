@@ -213,6 +213,15 @@ module Format = struct
 
   let sink = make_formatter (fun _ _ _ -> ()) (fun _ -> ())
 
+  let pp_print_record ?pp_sep ?pp_ksep pp_key pp_value ppf xs =
+    let pp_entry ?(pp_ksep = fun ppf () -> Format.fprintf ppf " :@ ") ppf (k, v) =
+      Format.fprintf ppf "@[<2>%a%a%a@]" pp_key k pp_ksep () pp_value v
+    in
+    let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
+    let pf = Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" in
+    pf (Format.pp_print_list ?pp_sep (pp_entry ?pp_ksep)) xs br
+  ;;
+
   let with_margin margin pp ppf x =
     let g = Format.pp_get_geometry ppf () in
     let max_indent = min g.max_indent (margin - 1) in
@@ -238,118 +247,6 @@ module PP = struct
     then kfprintf (fun ppf -> kfprintf (dprintf ")") ppf fmt) ppf "("
     else fprintf ppf fmt
   ;;
-end
-
-module Precedence : sig
-  type assoc =
-    | Left
-    | Right
-    | NonAssoc
-
-  val setup : Format.formatter -> Format.formatter
-
-  val wprintf
-    :  'level
-    -> assoc
-    -> Format.formatter
-    -> ('a, Format.formatter, unit) format
-    -> 'a
-
-  val reset : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> unit
-  val left : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> unit
-  val right : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> unit
-  val middle : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a -> unit
-end = struct
-  type position =
-    | PosLeft
-    | PosRight
-    | PosMiddle
-    | PosReset
-
-  type assoc =
-    | Left
-    | Right
-    | NonAssoc
-
-  type level =
-    | Top
-    | Level : 'a -> level
-
-  type precedence = level * assoc
-
-  type state =
-    { mutable precedence : precedence
-    ; mutable position : position
-    }
-
-  type container =
-    { precedence : precedence
-    ; mutable wrap : bool option
-    ; mutable parent : precedence
-    }
-
-  type Format.stag += PrecContainer of container | PrecChild of position
-
-  let should_wrap (state : state) (l, a) =
-    let l', _ = state.precedence in
-    match a, state.position with
-    | _, PosReset -> false
-    | NonAssoc, _ | _, PosMiddle -> l <= l'
-    | Left, PosLeft | Right, PosRight -> l < l'
-    | Left, PosRight | Right, PosLeft -> l <= l'
-  ;;
-
-  let print_open_stag fallback (state : state) = function
-    | PrecContainer c ->
-      c.wrap <- Some (should_wrap state c.precedence);
-      c.parent <- state.precedence;
-      state.precedence <- c.precedence;
-      state.position <- PosMiddle
-    | PrecChild p -> state.position <- p
-    | other -> fallback other
-  ;;
-
-  let print_close_stag fallback (state : state) = function
-    | PrecContainer c -> state.precedence <- c.parent
-    | PrecChild _ -> ()
-    | other -> fallback other
-  ;;
-
-  let setup ppf =
-    let state = { precedence = Top, NonAssoc; position = PosReset } in
-    let fns =
-      let fns = Format.pp_get_formatter_stag_functions ppf () in
-      let print_open_stag = print_open_stag fns.print_open_stag state
-      and print_close_stag = print_close_stag fns.print_close_stag state in
-      { fns with print_open_stag; print_close_stag }
-    in
-    Format.pp_set_formatter_stag_functions ppf fns;
-    Format.pp_set_print_tags ppf true;
-    ppf
-  ;;
-
-  let rec wprintf level assoc ppf fmt =
-    let precedence = Level level, assoc in
-    let container = { precedence; wrap = None; parent = Top, NonAssoc } in
-    Format.pp_open_stag ppf (PrecContainer container);
-    match container.wrap with
-    | None -> wprintf level assoc (setup ppf) fmt
-    | Some true ->
-      Format.fprintf ppf "@[<1>(";
-      Format.kfprintf (Format.dprintf ")@]@}") ppf fmt
-    | Some false -> Format.kfprintf (Format.dprintf "@}") ppf fmt
-  ;;
-
-  let child pos pp ppf x =
-    Format.pp_open_stag ppf (PrecChild pos);
-    pp ppf x;
-    Format.pp_close_stag ppf ()
-  ;;
-
-  let reset pp = child PosReset pp
-  let left pp = child PosLeft pp
-  let middle pp = child PosMiddle pp
-  let right pp = child PosRight pp
 end
 
 module Trace : sig

@@ -8,7 +8,7 @@ let panic = function
 
 let print = function
   | VConst (CString x) -> VConst (CUnit (Format.printf "%s\n%!" x))
-  | x -> VConst (CUnit (Format.printf "%a\n%!" PP.value x))
+  | x -> VConst (CUnit (Format.printf "%a\n%!" Value.pp x))
 ;;
 
 let add x y =
@@ -53,7 +53,7 @@ let run parse lexbuf =
   let aux expr =
     let typ = Typecheck.infer Typecheck.Env.empty expr
     and value = Eval.eval (Eval.Env.init builtin) expr in
-    Format.printf "%a :: %a@." PP.value value PP.typ typ
+    Format.printf "@[<2>%a ::@ %a@]@." Value.pp value Type.pp typ
   in
   try parse Lexer.token lexbuf |> List.iter aux with
   | Util.Diagnostic.Error.Error diag ->

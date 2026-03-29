@@ -11,6 +11,7 @@
  (depends
   logs
   (menhir :build)
+  (ppx_deriving :build)
   (bisect_ppx :dev)))
 
 (using menhir 3.0)

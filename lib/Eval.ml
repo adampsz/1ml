@@ -147,7 +147,7 @@ module Extern = struct
       let open Lang.FOmega in
       if Value.equal l r
       then ()
-      else Format.kasprintf failwith "expected %a, but got %a" PP.value l PP.value r
+      else Format.kasprintf failwith "expected %a, but got %a" Value.pp l Value.pp r
     ;;
 
     let rossberg extern = function
@@ -173,7 +173,7 @@ module Eval = struct
 
   let rec eval env expr =
     trace
-      (fun m -> m ~header:"eval" "%a" L.PP.expr expr)
+      (fun m -> m ~header:"eval" "%a" L.Expr.pp expr)
       (fun r m -> m ~header:"eval" "= %a" Value.pp r)
     @@ fun () -> failwith "todo"
   ;;

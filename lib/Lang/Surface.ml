@@ -1,19 +1,22 @@
 open Util
 include Common
 
-type ident = string Node.t
+type ident = string Node.t [@@deriving show]
 
 type eff =
   | Pure
   | Impure
+[@@deriving show]
 
 type feff =
   | Explicit
   | Implicit
+[@@deriving show]
 
 type vis =
   | Public
   | Private
+[@@deriving show]
 
 type typ = typ_data Node.t
 
@@ -27,12 +30,14 @@ and typ_data =
   | TArrow of ident * typ * feff * eff * typ
   | TSingletonType of typ
   | TWrapped of typ
+[@@deriving show]
 
 and decl = decl_data Node.t
 
 and decl_data =
   | DVal of ident * typ
   | DIncl of vis * typ
+[@@deriving show]
 
 and expr = expr_data Node.t
 
@@ -49,90 +54,17 @@ and expr_data =
   | EExtern of string * typ
   | EWrap of ident * typ
   | EUnwrap of ident * typ
+[@@deriving show]
 
 and bind = bind_data Node.t
 
 and bind_data =
   | BVal of ident * expr
   | BIncl of vis * expr
+[@@deriving show]
 
 type file = file_data Node.t
 and file_data = bind list
-
-module PP = struct
-  open Format
-
-  let eff_arrow eff =
-    match eff with
-    | Pure -> "=>"
-    | Impure -> "->"
-  ;;
-
-  let impl_tick exp =
-    match exp with
-    | Explicit -> ""
-    | Implicit -> "'"
-  ;;
-
-  let ident ppf id = pp_print_string ppf (Node.data id)
-  let depth = ref 0
-
-  let rec typ ppf t =
-    match Node.data t with
-    (* Level ∞ *)
-    | TPrim p -> Prim.pp ppf p
-    | THole -> pp_print_string ppf "_"
-    | TType -> pp_print_string ppf "type"
-    | TSingletonType t -> fprintf ppf "(= type %a)" typ t
-    | TStruct xs ->
-      let pp_sep ppf () = pp_print_string ppf "; " in
-      fprintf ppf "{ %a }" (pp_print_list ~pp_sep decl) xs
-    | TWith (t, xs, t') ->
-      let pp_sep ppf () = pp_print_string ppf "." in
-      let pp = fprintf ppf "(%a) with %a = (%a)" in
-      pp typ t (pp_print_list ~pp_sep ident) xs typ t'
-    | TArrow (x, t1, impl, eff, t2) ->
-      let pp = fprintf ppf "%s(%a: %a) %s (%a)" in
-      pp (impl_tick impl) ident x typ t1 (eff_arrow eff) typ t2
-    | TExpr e -> fprintf ppf "(%a)" expr e
-    | TWrapped t -> fprintf ppf "wrap (%a)" typ t
-
-  and decl ppf d =
-    match Node.data d with
-    | DVal (x, t) -> fprintf ppf "%a: %a" ident x typ t
-    | DIncl (Public, t) -> fprintf ppf "include %a" typ t
-    | DIncl (Private, t) -> fprintf ppf "open %a" typ t
-
-  and expr ppf e =
-    match Node.data e with
-    | EVar x -> ident ppf x
-    | EConst c -> Const.pp ppf c
-    | ECond (c, e1, e2, t) ->
-      let pp = fprintf ppf "if %a then (%a) else (%a) : (%a)" in
-      pp ident c expr e1 expr e2 typ t
-    | EStruct xs ->
-      let pp_sep ppf () = pp_print_string ppf "; " in
-      fprintf ppf "{ %a }" (pp_print_list ~pp_sep bind) xs
-    | EProj (e, x) -> fprintf ppf "%a.%a" expr e ident x
-    | EFun (x, t, i, e) ->
-      let pp = fprintf ppf "fun %s(%a: %a) => (%a)" in
-      pp (impl_tick i) ident x typ t expr e
-    | EApp (x1, x2) ->
-      let pp = fprintf ppf "(%a) (%a)" in
-      pp ident x1 ident x2
-    | EType t -> fprintf ppf "(type %a)" typ t
-    | ESeal (e, t) -> fprintf ppf "(%a) :> (%a)" ident e typ t
-    | EExtern (s, t) -> fprintf ppf "(extern %s: %a)" s typ t
-    | EWrap (e, t) -> fprintf ppf "wrap (%a) : (%a)" ident e typ t
-    | EUnwrap (e, t) -> fprintf ppf "unwrap (%a) : (%a)" ident e typ t
-
-  and bind ppf b =
-    match Node.data b with
-    | BVal (x, e) -> fprintf ppf "%a = %a" ident x expr e
-    | BIncl (Public, e) -> fprintf ppf "include %a" expr e
-    | BIncl (Private, e) -> fprintf ppf "open %a" expr e
-  ;;
-end
 
 module Sugar = struct
   let ( @@ ) data span = Node.make ?span data

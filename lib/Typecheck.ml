@@ -109,10 +109,10 @@ module Subtype = struct
     trace
       (fun m ->
          let pf = m ~header:"subtype" "%a <= %a at %a" in
-         pf T.PP.typ t' T.PP.typ t (T.PP.path T.PP.tvar) (Env.path env zip))
+         pf T.Type.pp t' T.Type.pp t (T.Path.pp T.TVar.pp) (Env.path env zip))
       (fun (zip, f) m ->
          let pf = m ~header:"subtype" "~> %a, λX. %a" in
-         pf T.PP.zipper zip T.PP.expr (f (T.Expr.EVar (T.Var.fresh "X"))))
+         pf T.Zipper.pp zip T.Expr.pp (f (T.Expr.EVar (T.Var.fresh "X"))))
     @@ fun () ->
     match view t', view t with
     (* Implicit functions *)
@@ -267,7 +267,7 @@ module Subtype = struct
   let _ =
     let fmt = Format.asprintf "mismstch in %s between %a and %a" in
     let f = function
-      | SubtypeError (msg, t1, t2) -> Some (fmt msg T.PP.typ t1 T.PP.typ t2)
+      | SubtypeError (msg, t1, t2) -> Some (fmt msg T.Type.pp t1 T.Type.pp t2)
       | _ -> None
     in
     Printexc.register_printer f
@@ -316,7 +316,7 @@ module Invariant = struct
       | InvariantViolation (t, p) ->
         let pp = Format.asprintf in
         let pp = pp "%s: type %a does not respect invariant at path %a" in
-        Some (pp "invariant violation" T.PP.typ t (T.PP.path T.PP.tvar) p)
+        Some (pp "invariant violation" T.Type.pp t (T.Path.pp T.TVar.pp) p)
       | _ -> None)
   ;;
 end
@@ -360,7 +360,7 @@ module Check = struct
       match String.Map.find_opt x env.vars with
       | Some (x, t) ->
         let t = T.Subst.typ T.Subst.id t in
-        debug (fun m -> m ~header:"env" "find %a ↦ %a" T.PP.var x T.PP.typ t);
+        debug (fun m -> m ~header:"env" "find %a ↦ %a" T.Var.pp x T.Type.pp t);
         x, t
       | None -> failwith (Printf.sprintf "todo error unbound var `%s'" x)
     ;;
@@ -416,10 +416,16 @@ module Check = struct
     trace
       (fun m ->
          let m = m ~header:"typ" "%a at %a" in
-         m Lang.Surface.PP.typ t (T.PP.path T.PP.tvar) (Env.path env))
+         m Lang.Surface.pp_typ t (T.Path.pp T.TVar.pp) (Env.path env))
       (fun (k, t) m ->
          let m = m ~header:"typ" "~> %a at %a with %a" in
-         m T.PP.typ t (T.PP.path T.PP.tvar) (Env.path env) T.PP.kind k)
+         m
+           T.Type.pp
+           t
+           (T.Path.pp T.TVar.pp)
+           (Env.path env)
+           (Format.pp_print_option T.Kind.pp)
+           k)
     @@ fun () ->
     match S.Node.data t with
     | S.TPrim p -> None, T.Type.TPrim p |> wrap
@@ -442,7 +448,7 @@ module Check = struct
          let fail =
            Format.kasprintf failwith "todo error expected small type, got kind %a"
          in
-         fail T.PP.kind k)
+         fail (Format.pp_print_option T.Kind.pp) k)
     | S.TWith (t, xs, t_') ->
       let k, t = typ env t in
       let xs, t_ = proj xs t in
@@ -478,7 +484,7 @@ module Check = struct
     trace
       (fun m ->
          let m = m ~header:"decl" "%a at %a" in
-         m Lang.Surface.PP.decl d (T.PP.path T.PP.tvar) (Env.path env))
+         m Lang.Surface.pp_decl d (T.Path.pp T.TVar.pp) (Env.path env))
       (fun _ m -> m ~header:"decl" "")
     @@ fun () ->
     match S.Node.data d with
@@ -502,10 +508,16 @@ module Check = struct
     trace
       (fun m ->
          let m = m ~header:"expr" "%a at %a" in
-         m Lang.Surface.PP.expr e (T.PP.path T.PP.tvar) (Env.path env))
+         m Lang.Surface.pp_expr e (T.Path.pp T.TVar.pp) (Env.path env))
       (fun (k, _, t, _) m ->
          let m = m ~header:"expr" ":: %a at %a with %a" in
-         m T.PP.typ t (T.PP.path T.PP.tvar) (Env.path env) T.PP.kind k)
+         m
+           T.Type.pp
+           t
+           (T.Path.pp T.TVar.pp)
+           (Env.path env)
+           (Format.pp_print_option T.Kind.pp)
+           k)
     @@ fun () ->
     match S.Node.data e with
     | S.EVar x ->
@@ -604,7 +616,7 @@ module Check = struct
         | None, T.Type.TWrapped t -> t
         | _, t ->
           let s = Format.asprintf "todo error: expected wrapped type, got %a" in
-          let s = s T.PP.typ (wrap t) in
+          let s = s T.Type.pp (wrap t) in
           failwith s
       in
       let x, t' = Env.find (S.Node.data x) env in
@@ -642,7 +654,7 @@ module Check = struct
     trace
       (fun m ->
          let m = m ~header:"bind" "%a at %a" in
-         m Lang.Surface.PP.bind b (T.PP.path T.PP.tvar) (Env.path env))
+         m Lang.Surface.pp_bind b (T.Path.pp T.TVar.pp) (Env.path env))
       (fun _ m -> m ~header:"bind" "")
     @@ fun () ->
     match S.Node.data b with

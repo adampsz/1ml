@@ -122,7 +122,7 @@ module Flat = struct
       | FTyp x -> pp ppf x
       | FRecord xs ->
         let pp_sep ppf () = Format.fprintf ppf "; "
-        and pp_item ppf (x, xs) = Format.fprintf ppf "%a: %a" S.PP.var x aux xs in
+        and pp_item ppf (x, xs) = Format.fprintf ppf "%a: %a" S.Var.pp x aux xs in
         Format.fprintf ppf "{ %a }" (Format.pp_print_list ~pp_sep pp_item) xs
     in
     match xs with
@@ -243,14 +243,14 @@ end = struct
 
   let add_var x env =
     let x' = T.Var.fresh ~name:(S.Var.name x) () in
-    debug (fun m -> m ~header:"var" "%a -> %a" S.PP.var x T.PP.var x');
+    debug (fun m -> m ~header:"var" "%a -> %a" S.Var.pp x T.Var.pp x');
     { env with vars = S.Var.Map.add x x' env.vars }, x'
   ;;
 
   let find_var x env =
     match S.Var.Map.find_opt x env.vars with
     | Some x' -> x'
-    | None -> Format.kasprintf failwith "unbound variable: %a" S.PP.var x
+    | None -> Format.kasprintf failwith "unbound variable: %a" S.Var.pp x
   ;;
 
   let add_tvar a k env =
@@ -259,8 +259,8 @@ end = struct
     | None -> env, None
     | Some a' ->
       debug (fun m ->
-        let pp_tvar ppf (Ex a : Ex.tvar) = T.PP.tvar ppf a in
-        m ~header:"tvar" "%a -> %a" S.PP.tvar a (Flat.pp pp_tvar) (Some a'));
+        let pp_tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
+        m ~header:"tvar" "%a -> %a" S.TVar.pp a (Flat.pp pp_tvar) (Some a'));
       { env with tvars = S.TVar.Map.add a a' env.tvars }, Some a'
   ;;
 
@@ -284,7 +284,7 @@ end = struct
   let find_tvar a env =
     match S.TVar.Map.find_opt a env.tvars with
     | Some x -> x
-    | None -> Format.kasprintf failwith "unbound type variable: %a" S.PP.tvar a
+    | None -> Format.kasprintf failwith "unbound type variable: %a" S.TVar.pp a
   ;;
 
   let module_tvars env = env.module_tvars
@@ -301,12 +301,12 @@ module Type = struct
 
   and ctyp env t : Ex.typ =
     trace
-      (fun m -> m ~header:"typ" "%a" S.PP.typ t)
-      (fun (Ex t : Ex.typ) m -> m ~header:"typ" "~> %t" (fun ppf -> T.PP.typ ppf t))
+      (fun m -> m ~header:"typ" "%a" S.Type.pp t)
+      (fun (Ex t : Ex.typ) m -> m ~header:"typ" "~> %t" (fun ppf -> T.Type.pp ppf t))
     @@ fun () ->
     match S.Type.view t with
     | S.Type.TInfer _ ->
-      Format.kasprintf failwith "unresolved type inference variable: %a" S.PP.typ t
+      Format.kasprintf failwith "unresolved type inference variable: %a" S.Type.pp t
     | S.Type.TPrim p -> Ex (T.Type.TPrim p)
     | S.Type.TAbstr p -> path env p
     | S.Type.TArrow (TMod (a1, k1, t1), eff, t2) ->
@@ -329,7 +329,7 @@ module Type = struct
   and path env p =
     trace
       (fun m -> m ~header:"path" "")
-      (fun (Ex t : Ex.typ) m -> m ~header:"path" "~> %t" (fun ppf -> T.PP.typ ppf t))
+      (fun (Ex t : Ex.typ) m -> m ~header:"path" "~> %t" (fun ppf -> T.Type.pp ppf t))
     @@ fun () ->
     let rec aux args a r =
       match a, r with
@@ -360,8 +360,8 @@ end
 module Elab = struct
   let rec materialize env t =
     trace
-      (fun m -> m ~header:"materialize" "%a" S.PP.typ t)
-      (fun e m -> m ~header:"materialize" "~> %a" T.PP.expr e)
+      (fun m -> m ~header:"materialize" "%a" S.Type.pp t)
+      (fun e m -> m ~header:"materialize" "~> %a" T.Expr.pp e)
     @@ fun () ->
     match S.Type.view t with
     | S.Type.TPrim PUnit -> T.Expr.EConst (CUnit ())
@@ -390,10 +390,10 @@ module Elab = struct
   let rec expr env e =
     trace
       (fun m ->
-         let tvar ppf (Ex a : Ex.tvar) = T.PP.tvar ppf a in
+         let tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
          let m = m ~header:"expr" "%a @@ %a" in
-         m S.PP.expr e (Flat.pp tvar) (Env.module_tvars env))
-      (fun e m -> m ~header:"expr" "~> %a" T.PP.expr e)
+         m S.Expr.pp e (Flat.pp tvar) (Env.module_tvars env))
+      (fun e m -> m ~header:"expr" "~> %a" T.Expr.pp e)
     @@ fun () ->
     match e with
     | S.Expr.EVar x -> T.Expr.EVar (Env.find_var x env)
@@ -461,7 +461,9 @@ module Elab = struct
     expr env e
 
   and bind env b =
-    trace (fun m -> m ~header:"bind" "%a" S.PP.bind b) (fun _ m -> m ~header:"bind" "")
+    trace
+      (fun m -> m ~header:"bind" "%a" S.Expr.pp_bind b)
+      (fun _ m -> m ~header:"bind" "")
     @@ fun () ->
     let proj tmp env (x, _) =
       let env, x' = Env.add_var x env in
@@ -486,11 +488,11 @@ module Elab = struct
   let file env node =
     trace
       (fun m ->
-         let expr = Format.with_margin 140 S.PP.expr_modu in
+         let expr = Format.with_margin 140 S.Expr.pp_modu in
          let expr = Format.with_max_boxes Int.max_int expr in
          m ~header:"file" "%a" expr node)
       (fun t m ->
-         let expr = Format.with_margin 140 T.PP.expr in
+         let expr = Format.with_margin 140 T.Expr.pp in
          let expr = Format.with_max_boxes Int.max_int expr in
          m ~header:"file" "%a" expr t)
     @@ fun () -> modu env node

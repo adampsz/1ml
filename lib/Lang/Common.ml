@@ -9,6 +9,7 @@ module Node : sig
   val span : _ node -> span option
   val data : 'a node -> 'a
   val map : ('a -> 'b) -> 'a node -> 'b node
+  val pp : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a t -> unit
 end = struct
   module UID = Counter.Make ()
 
@@ -20,6 +21,7 @@ end = struct
   let data (_, data, _) = data
   let span (_, _, span) = span
   let map f (_, data, span) = make ?span (f data)
+  let pp pp ppf (_, data, _) = pp ppf data
 end
 
 module Prim = struct
@@ -30,20 +32,13 @@ module Prim = struct
     | PFloat
     | PChar
     | PString
+  [@@deriving show]
 
   type t = prim
 
   let compare : t -> t -> int = compare
   let equal : t -> t -> bool = ( = )
-
-  let pp ppf = function
-    | PUnit -> Format.pp_print_string ppf "unit"
-    | PBool -> Format.pp_print_string ppf "bool"
-    | PInt -> Format.pp_print_string ppf "int"
-    | PFloat -> Format.pp_print_string ppf "float"
-    | PChar -> Format.pp_print_string ppf "char"
-    | PString -> Format.pp_print_string ppf "string"
-  ;;
+  let pp = pp_prim
 end
 
 module Const = struct
@@ -54,6 +49,7 @@ module Const = struct
     | CFloat of float
     | CChar of char
     | CString of string
+  [@@deriving show]
 
   type t = const
 
@@ -69,12 +65,5 @@ module Const = struct
     | CString _ -> Prim.PString
   ;;
 
-  let pp ppf = function
-    | CUnit () -> Format.pp_print_string ppf "()"
-    | CBool b -> Format.fprintf ppf "%b" b
-    | CInt i -> Format.fprintf ppf "%d" i
-    | CFloat f -> Format.fprintf ppf "%f" f
-    | CChar c -> Format.fprintf ppf "%C" c
-    | CString s -> Format.fprintf ppf "%S" s
-  ;;
+  let pp = pp_const
 end

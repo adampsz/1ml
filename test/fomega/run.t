@@ -2,52 +2,57 @@
   
   0. Hello
   
-  9
-  2 :: int
+  (FOmega.Value.VConst (Common.Const.CInt 9))
+  (FOmega.Value.VConst (Common.Const.CInt 2)) ::
+    (FOmega.Type.TPrim Common.Prim.PInt)
   
   1. Pairs (Record encoding)
   
-  6
-  true
-  () :: unit
+  (FOmega.Value.VConst (Common.Const.CInt 6))
+  (FOmega.Value.VConst (Common.Const.CBool true))
+  (FOmega.Value.VConst (Common.Const.CUnit ())) ::
+    (FOmega.Type.TPrim Common.Prim.PUnit)
   
   2. Pairs (Church encoding)
   
-  6
-  true
-  () :: unit
+  (FOmega.Value.VConst (Common.Const.CInt 6))
+  (FOmega.Value.VConst (Common.Const.CBool true))
+  (FOmega.Value.VConst (Common.Const.CUnit ())) ::
+    (FOmega.Type.TPrim Common.Prim.PUnit)
   
   3. Lists (right fold encoding)
   
    - Basics
-  15
-  4
-  false
-  true
+  (FOmega.Value.VConst (Common.Const.CInt 15))
+  (FOmega.Value.VConst (Common.Const.CInt 4))
+  (FOmega.Value.VConst (Common.Const.CBool false))
+  (FOmega.Value.VConst (Common.Const.CBool true))
    - Mapped
-  24
-  7
-  8
-  9
+  (FOmega.Value.VConst (Common.Const.CInt 24))
+  (FOmega.Value.VConst (Common.Const.CInt 7))
+  (FOmega.Value.VConst (Common.Const.CInt 8))
+  (FOmega.Value.VConst (Common.Const.CInt 9))
    - Append
-  9
-  8
-  7
-  6
-  5
-  4
+  (FOmega.Value.VConst (Common.Const.CInt 9))
+  (FOmega.Value.VConst (Common.Const.CInt 8))
+  (FOmega.Value.VConst (Common.Const.CInt 7))
+  (FOmega.Value.VConst (Common.Const.CInt 6))
+  (FOmega.Value.VConst (Common.Const.CInt 5))
+  (FOmega.Value.VConst (Common.Const.CInt 4))
    - Nested
-  3
-  2
-  1
-  () :: unit
+  (FOmega.Value.VConst (Common.Const.CInt 3))
+  (FOmega.Value.VConst (Common.Const.CInt 2))
+  (FOmega.Value.VConst (Common.Const.CInt 1))
+  (FOmega.Value.VConst (Common.Const.CUnit ())) ::
+    (FOmega.Type.TPrim Common.Prim.PUnit)
   
   4. Church numerals
   
-  4
-  7
-  12
-  81
-  1
-  54
-  () :: unit
+  (FOmega.Value.VConst (Common.Const.CInt 4))
+  (FOmega.Value.VConst (Common.Const.CInt 7))
+  (FOmega.Value.VConst (Common.Const.CInt 12))
+  (FOmega.Value.VConst (Common.Const.CInt 81))
+  (FOmega.Value.VConst (Common.Const.CInt 1))
+  (FOmega.Value.VConst (Common.Const.CInt 54))
+  (FOmega.Value.VConst (Common.Const.CUnit ())) ::
+    (FOmega.Type.TPrim Common.Prim.PUnit)

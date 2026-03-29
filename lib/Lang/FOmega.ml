@@ -10,7 +10,6 @@ module Kind = struct
     | KArrow : 'k1 t * 'k2 t -> ('k1 -> 'k2) t
 
   type 'k kind = 'k t
-  type ex = Ex : 'k t -> ex
 
   let rec hequal : type k1 k2. k1 t -> k2 t -> (k1, k2) eq option =
     fun k1 k2 ->
@@ -24,11 +23,18 @@ module Kind = struct
   ;;
 
   let equal (x : 'k t) (y : 'k t) : bool = x = y
+
+  let rec pp : type k. _ -> k t -> _ =
+    fun ppf -> function
+    | KType -> Format.fprintf ppf "@[<2>FOmega.Kind.KType@]"
+    | KArrow (k1, k2) ->
+      let pf = Format.fprintf ppf "(@[<2>FOmega.Kind.KArrow (@,%a,@ %a@,))@]" in
+      pf pp k1 pp k2
+  ;;
 end
 
 module TVar : sig
   type 'k t
-  type ex = Ex : 'k t -> ex
 
   val id : 'k t -> int
   val kind : 'k t -> 'k Kind.t
@@ -39,13 +45,13 @@ module TVar : sig
   val compare : 'k t -> 'k t -> int
   val hequal : 'k1 t -> 'k2 t -> ('k1, 'k2) eq option
   val hcompare : 'k1 t -> 'k2 t -> int
+  val pp : Format.formatter -> 'k t -> unit
 
   module Map : HMap.S with type 'k key = 'k t
 end = struct
   module UID = Counter.Make ()
 
   type 'k t = UID.t * 'k Kind.t * string option
-  type ex = Ex : 'k t -> ex
 
   let id (x, _, _) = UID.get x
   let kind (_, k, _) = k
@@ -57,6 +63,11 @@ end = struct
   let equal (x1, _, _) (x2, _, _) = x1 = x2
   let compare = hcompare
 
+  let pp ppf = function
+    | x, _, None -> Format.fprintf ppf "#%d" (UID.get x)
+    | x, _, Some n -> Format.fprintf ppf "%s#%d" n (UID.get x)
+  ;;
+
   module Map = HMap.Make (struct
       type nonrec 'k t = 'k t
 
@@ -67,21 +78,18 @@ end
 module Type = struct
   open Kind
 
-  type 'k tvar = 'k TVar.t
-
   (** τ *)
   type _ typ =
-    | TVar : 'k tvar -> 'k typ (** α *)
+    | TVar : 'k TVar.t -> 'k typ (** α *)
     | TPrim : Prim.t -> ktyp typ (** b *)
     | TArrow : ktyp typ * ktyp typ -> ktyp typ (** τ → τ *)
     | TRecord : (string * ktyp typ) list -> ktyp typ (** { l: τ, …, l: τ } *)
-    | TForall : 'k tvar * ktyp typ -> ktyp typ (** ∀κ. τ *)
-    | TExists : 'k tvar * ktyp typ -> ktyp typ (** ∃κ. τ *)
+    | TForall : 'k TVar.t * ktyp typ -> ktyp typ (** ∀κ. τ *)
+    | TExists : 'k TVar.t * ktyp typ -> ktyp typ (** ∃κ. τ *)
     | TLam : 'k1 TVar.t * 'k2 typ -> ('k1 -> 'k2) typ (** λα:κ. τ *)
     | TApp : ('k1 -> 'k2) typ * 'k1 typ -> 'k2 typ (** τ τ *)
 
   type 'k t = 'k typ
-  type ex = Ex : 'k typ -> ex
   type ttyp = ktyp typ
 
   let rec kind : type k. k typ -> k kind = function
@@ -153,8 +161,8 @@ module Type = struct
       | NPrim : Prim.t -> ktyp t
       | NArrow : ttyp * ttyp -> ktyp t
       | NRecord : (string * ttyp) list -> ktyp t
-      | NForall : 'k tvar * ttyp -> ktyp t
-      | NExists : 'k tvar * ttyp -> ktyp t
+      | NForall : 'k TVar.t * ttyp -> ktyp t
+      | NExists : 'k TVar.t * ttyp -> ktyp t
 
     let rec normalize : type k. k typ -> k t = function
       | TVar x -> NNeutral (NVar x)
@@ -215,6 +223,37 @@ module Type = struct
       aux t1 t2
     ;;
   end
+
+  let rec pp : type k. _ -> k t -> _ =
+    fun ppf -> function
+    | TVar x ->
+      let pf = Format.fprintf ppf "(@[<2>FOmega.Type.TVar@ %a@])" in
+      pf TVar.pp x
+    | TPrim p ->
+      let pf = Format.fprintf ppf "(@[<2>FOmega.Type.TPrim@ %a@])" in
+      pf Prim.pp p
+    | TArrow (t1, t2) ->
+      let pf = Format.fprintf ppf "(@[<2>FOmega.Type.TArrow (@,%a,@ %a@,))@]" in
+      pf pp t1 pp t2
+    | TRecord ts ->
+      let pp_entry = Format.pp_print_record Format.pp_print_string pp in
+      Format.fprintf ppf "(@[<2>FOmega.Type.TRecord@ %a@])" pp_entry ts
+    | TForall (x, t) ->
+      let pf = Format.fprintf ppf "(@[<2>FOmega.Type.TForall (@,%a,@ %a@,))@]" in
+      pf TVar.pp x pp t
+    | TExists (x, t) ->
+      let pf = Format.fprintf ppf "(@[<2>FOmega.Type.TExists (@,%a,@ %a@,))@]" in
+      pf TVar.pp x pp t
+    | TLam (x, t) ->
+      let pf = Format.fprintf ppf "(@[<2>FOmega.Type.TLam (@,%a,@ %a@,))@]" in
+      pf TVar.pp x pp t
+    | TApp (t1, t2) ->
+      let pf = Format.fprintf ppf "(@[<2>FOmega.Type.TApp (@,%a,@ %a@,))@]" in
+      pf pp t1 pp t2
+  ;;
+
+  let pp_typ = pp
+  let pp_ttyp ppf (t : ttyp) = pp ppf t
 end
 
 module Var : sig
@@ -226,6 +265,7 @@ module Var : sig
   val name : t -> string option
   val equal : t -> t -> bool
   val compare : t -> t -> int
+  val pp : Format.formatter -> t -> unit
 
   module Map : Map.S with type key = t
 end = struct
@@ -240,6 +280,11 @@ end = struct
   let equal (x1, _) (x2, _) = x1 = x2
   let compare (x1, _) (x2, _) = UID.compare x1 x2
 
+  let pp ppf = function
+    | x, None -> Format.fprintf ppf "#%d" (UID.get x)
+    | x, Some n -> Format.fprintf ppf "%s#%d" n (UID.get x)
+  ;;
+
   module Map = Map.Make (struct
       type nonrec t = t
 
@@ -250,27 +295,33 @@ end
 module Expr = struct
   open Type
 
-  type var = Var.t
-
   (** e *)
   type expr =
     | EVar of Var.t (** x *)
     | EConst of Const.t (** c_b *)
-    | ELam of var * ttyp * expr (** λx:τ. e *)
+    | ELam of Var.t * ttyp * expr (** λx:τ. e *)
     | EApp of expr * expr (** e e *)
-    | ERecord of (string * expr) list (** { l: e, …, l: e } *)
+    | ERecord of (string * expr) list
+    [@printer Format.pp_print_record Format.pp_print_string pp_expr]
+    (** { l: e, …, l: e } *)
     | EProj of expr * string (** e.l *)
-    | ETyLam : 'k tvar * expr -> expr (** λα. e *)
-    | ETyApp : expr * 'k typ -> expr (** e τ *)
-    | EPack : 'k typ * expr * 'k tvar * ttyp -> expr (** pack ⟨τ, e⟩ as ∃α. τ *)
-    | EUnpack : 'k tvar * var * expr * expr -> expr (** unpack ⟨α, x⟩ = e in e *)
+    | ETyLam : ('k TVar.t[@printer TVar.pp]) * expr -> expr (** λα. e *)
+    | ETyApp : expr * ('k Type.t[@printer Type.pp]) -> expr (** e τ *)
+    | EPack :
+        ('k Type.t[@printer Type.pp]) * expr * ('k TVar.t[@printer TVar.pp]) * ttyp
+        -> expr (** pack ⟨τ, e⟩ as ∃α. τ *)
+    | EUnpack : ('k TVar.t[@printer TVar.pp]) * Var.t * expr * expr -> expr
+    (** unpack ⟨α, x⟩ = e in e *)
     (* Sugar *)
-    | ELetIn of var * expr * expr (** let x = e1 in e2 *)
+    | ELetIn of Var.t * expr * expr (** let x = e1 in e2 *)
     (* Non-standard *)
     | EExtern of string * ttyp
     | ECond of expr * expr * expr
+  [@@deriving show]
 
   type t = expr
+
+  let pp = pp_expr
 end
 
 module Value = struct
@@ -279,8 +330,10 @@ module Value = struct
     | VConst of Const.t
     | VLam of (value -> value)
     | VRecord of (string * value) list
+    [@printer Format.pp_print_record Format.pp_print_string pp_value]
     | VTyLam of (unit -> value)
     | VPack of value
+  [@@deriving show]
 
   type t = value
 
@@ -296,177 +349,27 @@ module Value = struct
     | VPack x, VPack y -> equal x y
     | VPack _, _ -> false
   ;;
-end
 
-module PP = struct
-  type prec =
-    | PEComplex
-    | PECond
-    | PEApp
-    | PEProj
-    | PEAtom
-    | PTBinder
-    | PTArrow
-    | PTApp
-    | PTAtom
-    | PKArrow
-    | PKAtom
-
-  let rec kind : type k. _ -> k Kind.t -> _ =
-    fun ppf k ->
-    let rec aux : type k. _ -> k Kind.t -> _ =
-      fun ppf -> function
-        | KType -> Format.pp_print_string ppf "*"
-        | KArrow (k1, k2) ->
-          Format.fprintf ppf "%a@;<1 2>→  %a" (Precedence.left kind) k1 aux k2
-    in
-    let prec = if Kind.hequal k KType <> None then PKAtom else PKArrow in
-    Precedence.wprintf prec Right ppf "@[%a@]" aux k
-  ;;
-
-  let tvar ppf x =
-    match TVar.name x with
-    | Some n -> Format.fprintf ppf "%s#%d" n (TVar.id x)
-    | None -> Format.fprintf ppf "_#%d" (TVar.id x)
-  ;;
-
-  let binder (type k) ppf (x : k TVar.t) =
-    match Kind.hequal (TVar.kind x) KType with
-    | Some Equal -> tvar ppf x
-    | None -> Format.fprintf ppf "@[%a:@ %a@]" tvar x kind (TVar.kind x)
-  ;;
-
-  let rec typ : type k. _ -> k Type.t -> _ =
-    fun ppf -> function
-    | Type.TVar x -> tvar ppf x
-    | Type.TPrim x -> Prim.pp ppf x
-    | Type.TRecord [] -> Format.fprintf ppf "{ }"
-    | Type.TRecord ts ->
-      let pp_list =
-        let typ = Precedence.reset typ in
-        let pp_field ppf (l, t) = Format.fprintf ppf "@[<2>%s:@ %a@]" l typ t
-        and pp_sep ppf _ = Format.fprintf ppf ",@ " in
-        Format.pp_print_list ~pp_sep pp_field
-      in
-      let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
-      Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" pp_list ts br
-    | Type.TApp _ as t ->
-      let rec aux : type k. _ -> k Type.t -> _ =
-        fun ppf -> function
-          | TApp (t1, t2) ->
-            Format.fprintf ppf "%a@;<1 2>%a" aux t1 (Precedence.right typ) t2
-          | t -> Precedence.left typ ppf t
-      in
-      Precedence.wprintf PTApp Left ppf "@[%a@]" aux t
-    | Type.TArrow _ as t ->
-      let rec aux : type k. _ -> k Type.t -> _ =
-        fun ppf -> function
-          | TArrow (t1, t2) ->
-            Format.fprintf ppf "%a@;<1 2>→  %a" (Precedence.left typ) t1 aux t2
-          | t -> Precedence.right typ ppf t
-      in
-      Precedence.wprintf PTArrow Left ppf "@[%a@]" aux t
-    | Type.TForall (x, t) ->
-      let pf = Precedence.wprintf PTBinder Right ppf "@[<2>∀ %a.@ %a@]" in
-      pf binder x (Precedence.right typ) t
-    | Type.TExists (x, t) ->
-      let pf = Precedence.wprintf PTBinder Right ppf "@[<2>∃ %a.@ %a@]" in
-      pf binder x (Precedence.right typ) t
-    | Type.TLam (x, t) ->
-      let pf = Precedence.wprintf PTBinder Right ppf "@[<2>λ %a.@ %a@]" in
-      pf binder x (Precedence.right typ) t
-  ;;
-
-  let var ppf x =
-    match Var.name x with
-    | Some n -> Format.fprintf ppf "%s#%d" n (Var.id x)
-    | None -> Format.fprintf ppf "_#%d" (Var.id x)
-  ;;
-
-  let rec expr ppf = function
-    | Expr.EVar x -> var ppf x
-    | Expr.EConst x -> Const.pp ppf x
-    | Expr.ERecord [] -> Format.fprintf ppf "{ }"
-    | Expr.ERecord xs ->
-      let pp_list =
-        let expr = Precedence.reset expr in
-        let pp_field ppf (x, e) = Format.fprintf ppf "@[<2>%s:@ %a@]" x expr e
-        and pp_sep ppf _ = Format.fprintf ppf ",@ " in
-        Format.pp_print_list ~pp_sep pp_field
-      in
-      let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
-      Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" pp_list xs br
-    | Expr.EExtern (s, t) ->
-      Format.fprintf ppf "(@[extern %s:@ %a@])" s (Precedence.reset typ) t
-    | Expr.EProj _ as e ->
-      let rec aux ppf = function
-        | Expr.EProj (e, l) -> Format.fprintf ppf "%a@,.%s" aux e l
-        | e -> expr ppf e
-      in
-      Precedence.wprintf PEProj NonAssoc ppf "@[<2>%a@]" aux e
-    | (Expr.EApp _ | Expr.ETyApp _) as e ->
-      let rec aux ppf = function
-        | Expr.EApp (e1, e2) ->
-          Format.fprintf ppf "%a@ %a" aux e1 (Precedence.right expr) e2
-        | Expr.ETyApp (e1, t2) ->
-          Format.fprintf ppf "%a@ [%a]" aux e1 (Precedence.reset typ) t2
-        | e -> Precedence.left expr ppf e
-      in
-      Precedence.wprintf PEApp Left ppf "@[<2>%a@]" aux e
-    | Expr.ECond (c, e1, e2) ->
-      let pf = Precedence.wprintf PECond NonAssoc ppf in
-      let pf = pf "@[<2>if@ @[%a@]@ then@ @[%a@]@ else@ @[%a@]@]" in
-      pf expr c expr e1 expr e2
-    | Expr.ELam (x, t, e) ->
-      let pf = Precedence.wprintf PEComplex Right ppf "@[<2>λ @[%a:@ %a@].@ %a@]" in
-      pf var x typ t (Precedence.right expr) e
-    | Expr.ETyLam (x, e) ->
-      let pf = Precedence.wprintf PEComplex Right ppf "@[<2>Λ %a.@ %a@]" in
-      pf binder x (Precedence.right expr) e
-    | Expr.EPack (t, e, a, s) ->
-      let pf = Precedence.wprintf PEComplex NonAssoc ppf in
-      let pf = pf "@[<2>pack@ @[%a@]:@ ∃ @[%a@] =@ @[%a@].@;<1 2>@[%a@]@]" in
-      pf expr e binder a typ t typ s
-    | (Expr.EUnpack _ | Expr.ELetIn _) as e ->
-      let rec aux ppf = function
-        | Expr.EUnpack (a, x, e1, e2) ->
-          let pf = Format.fprintf ppf "@[unpack ⟨%a, %a⟩ =@;<1 2>%a@] in@ %a" in
-          pf binder a var x expr e1 aux e2
-        | Expr.ELetIn (x, e1, e2) ->
-          Format.fprintf ppf "@[<2>let %a =@;<1 2>%a@] in@ %a" var x expr e1 aux e2
-        | e -> expr ppf e
-      in
-      Precedence.wprintf PEComplex Right ppf "@[%a@]" aux e
-  ;;
-
-  let rec value ppf = function
-    | Value.VConst x -> Const.pp ppf x
-    | VLam _ | VTyLam _ -> Format.pp_print_string ppf "<fun>"
-    | VRecord vs ->
-      let pp_field ppf (l, v) = Format.fprintf ppf "%s: %a" l value v
-      and pp_sep ppf _ = Format.pp_print_string ppf ", " in
-      Format.fprintf ppf "{ %a }" (Format.pp_print_list ~pp_sep pp_field) vs
-    | VPack v -> Format.fprintf ppf "pack %a" value v
-  ;;
+  let pp = pp_value
 end
 
 module Error = struct
   open Diagnostic.Error
 
   let undefined_extern_symbol id = error "undefined external symbol `%s'" id
-  let undefined_variable x = error "undefined variable `%a'" PP.var x
-  let undefined_type_variable x = error "undefined type variable `%a'" PP.tvar x
+  let undefined_variable x = error "undefined variable `%a'" Var.pp x
+  let undefined_type_variable x = error "undefined type variable `%a'" TVar.pp x
 
   let expected_matching_kind k1 k2 =
-    error "expected kind %a, but got %a" PP.kind k1 PP.kind k2
+    error "expected kind %a, but got %a" Kind.pp k1 Kind.pp k2
   ;;
 
   let expected_matching_type t1 t2 =
     let err = error "@[expected@;<1 2>@[%a@],@;<1 -2>but got@;<1 2>@[%a@]@;<1 -2>@]" in
-    err PP.typ t1 PP.typ t2
+    err Type.pp t1 Type.pp t2
   ;;
 
-  let expected_type what t = error "expected %s, but got %a" what PP.typ t
+  let expected_type what t = error "expected %s, but got %a" what Type.pp t
   let expected_function_type = expected_type "a function type"
   let expected_record_type = expected_type "a record type"
   let expected_existential_type = expected_type "an existential type"
@@ -474,11 +377,11 @@ module Error = struct
   let expected_bool = expected_type "a boolean"
 
   let undefined_record_field ts l =
-    error "undefined field `%s' in record %a" l PP.typ (TRecord ts)
+    error "undefined field `%s' in record %a" l Type.pp (TRecord ts)
   ;;
 
   let variable_escapes_scope a t =
-    error "variable `%a' escapes its scope in type `%a'" PP.tvar a PP.typ t
+    error "variable `%a' escapes its scope in type `%a'" TVar.pp a Type.pp t
   ;;
 end
 
@@ -490,10 +393,10 @@ module Typecheck = struct
     type t
 
     val empty : t
-    val add_var : var -> ttyp -> t -> t
-    val add_typ : 'k tvar -> t -> 'k tvar * t
+    val add_var : Var.t -> ttyp -> t -> t
+    val add_typ : 'k TVar.t -> t -> 'k TVar.t * t
     val find_var : Var.t -> t -> ttyp option
-    val find_typ : 'k tvar -> t -> 'k tvar option
+    val find_typ : 'k TVar.t -> t -> 'k TVar.t option
   end = struct
     module Subst = TVar.Map.Make (TVar)
 
@@ -537,8 +440,8 @@ module Typecheck = struct
 
   let rec infer env e =
     trace
-      (fun m -> m ~header:"infer" "%a" PP.expr e)
-      (fun t m -> m ~header:"infer" ":: %a" PP.typ t)
+      (fun m -> m ~header:"infer" "%a" Expr.pp e)
+      (fun t m -> m ~header:"infer" ":: %a" Type.pp t)
     @@ fun _ ->
     match e with
     | EVar x ->
@@ -605,11 +508,11 @@ module Typecheck = struct
   let check env e =
     trace
       (fun m ->
-         let expr = Format.with_margin 140 PP.expr in
+         let expr = Format.with_margin 140 Expr.pp in
          let expr = Format.with_max_boxes Int.max_int expr in
          m ~header:"check" "%a" expr e)
       (fun t m ->
-         let typ = Format.with_margin 140 PP.typ in
+         let typ = Format.with_margin 140 Type.pp in
          let typ = Format.with_max_boxes Int.max_int typ in
          m ~header:"check" "%a" typ t)
     @@ fun () -> infer env e
@@ -624,7 +527,7 @@ module Eval = struct
     type t
 
     val init : (string -> value option) -> t
-    val add_var : var -> value -> t -> t
+    val add_var : Var.t -> value -> t -> t
     val find_var : Var.t -> t -> value
     val find_extern : string -> t -> value option
   end = struct
@@ -638,8 +541,8 @@ module Eval = struct
 
   let rec eval env e =
     trace
-      (fun m -> m ~header:"eval" "%a" PP.expr e)
-      (fun v m -> m ~header:"eval" "= %a" PP.value v)
+      (fun m -> m ~header:"eval" "%a" Expr.pp e)
+      (fun v m -> m ~header:"eval" "= %a" Value.pp v)
     @@ fun _ ->
     match e with
     | EVar x -> Env.find_var x env
