@@ -52,7 +52,7 @@ end = struct
 
   let assoc_update name f xs =
     match assoc_opt name xs with
-    | Some (x, _) -> List.assoc_update x f xs
+    | Some (x, _) -> List.Assoc.update x f xs
     | None -> Option.fold ~none:xs ~some:(fun v -> (fresh name, v) :: xs) (f None)
   ;;
 
@@ -73,42 +73,38 @@ end
 
 module Kind = struct
   type t =
+    | KEmpty
     | KType
-    | KRecord of (Var.t * t) list [@printer Format.pp_print_record Var.pp pp]
     | KArrow of t * t
+    | KRecord of (Var.t * t) list [@printer Format.pp_print_record Var.pp pp]
   [@@deriving show]
 
   type kind = t
 
   let equal = ( = )
 
-  let eff = function
-    | Some _ -> Effect.Impure
-    | None -> Effect.Pure
+  let rec is_empty = function
+    | KEmpty -> true
+    | KType -> false
+    | KRecord xs -> List.for_all (fun (_, k) -> is_empty k) xs
+    | KArrow (_, k) -> is_empty k
   ;;
 
-  let record = function
-    | [] -> None
-    | xs -> Some (KRecord xs)
-  ;;
-
-  let arrow k1 k2 =
-    match k1, k2 with
-    | Some k1, Some k2 -> Some (KArrow (k1, k2))
-    | None, Some k2 -> Some k2
-    | _, None -> None
-  ;;
+  let eff k = if is_empty k then Effect.Pure else Effect.Impure
 end
 
 module TVar : sig
   type t
 
-  val null : t
   val id : t -> int
-  val fresh : unit -> t
+  val kind : t -> Kind.t
+  val fresh : Kind.t -> t
+  val empty : t
+  val defer : unit -> t * (Kind.t -> unit)
   val clone : t -> t
   val equal : t -> t -> bool
   val compare : t -> t -> int
+  val is_empty : t -> bool
   val pp : Format.formatter -> t -> unit
 
   module Set : Set.S with type elt = t
@@ -116,15 +112,24 @@ module TVar : sig
 end = struct
   module UID = Counter.Make ()
 
-  type t = UID.t
+  type t = Kind.t Once.t * UID.t
 
-  let null = UID.next ()
-  let id x = UID.get x
-  let fresh () = UID.next ()
-  let clone _ = fresh ()
-  let equal x1 x2 = UID.equal x1 x2
-  let compare x1 x2 = UID.compare x1 x2
-  let pp ppf x = Format.fprintf ppf "#%d" (UID.get x)
+  let id (_, x) = UID.get x
+  let kind (k, _) = Once.get k
+  let fresh k = Once.from_val k, UID.next ()
+
+  let defer () =
+    let x = Once.make () in
+    (x, UID.next ()), fun k -> Once.set x k
+  ;;
+
+  let set (kc, _) k = Once.set kc k
+  let clone (k, _) = k, UID.next ()
+  let equal (_, x1) (_, x2) = UID.equal x1 x2
+  let compare (_, x1) (_, x2) = UID.compare x1 x2
+  let pp ppf (_, x) = Format.fprintf ppf "#%d" (UID.get x)
+  let empty = fresh Kind.KEmpty
+  let is_empty x = Kind.is_empty (kind x)
 
   module Set = Set.Make (struct
       type nonrec t = t
@@ -260,13 +265,13 @@ module Path = struct
   type 'a path =
     | PVar of TVar.t
     | PProj of 'a path * Var.t
-    | PApp of 'a path * 'a * Kind.t option
+    | PApp of 'a path * 'a
   [@@deriving show]
 
   type 'a t = 'a path
 
   let pp = pp_path
-  let null = PVar TVar.null
+  let empty = PVar TVar.empty
 
   let rec equal arg p' p =
     match p', p with
@@ -274,34 +279,34 @@ module Path = struct
     | PVar _, _ -> false
     | PProj (p', f'), PProj (p, f) -> equal arg p' p && Var.equal f' f
     | PProj _, _ -> false
-    | PApp (p', a', _), PApp (p, a, _) -> equal arg p' p && arg a' a
+    | PApp (p', a'), PApp (p, a) -> equal arg p' p && arg a' a
     | PApp _, _ -> false
   ;;
 
   let rec var = function
     | PVar a -> a
     | PProj (p, _) -> var p
-    | PApp (p, _, _) -> var p
+    | PApp (p, _) -> var p
   ;;
 
   let rec map f = function
     | PVar a -> PVar a
     | PProj (p, x) -> PProj (map f p, x)
-    | PApp (p, a, k) -> PApp (map f p, f a, k)
+    | PApp (p, a) -> PApp (map f p, f a)
   ;;
 
   let rec prepend p' p =
     match p with
     | PVar _ -> p'
     | PProj (p, x) -> PProj (prepend p' p, x)
-    | PApp (p, a, k) -> PApp (prepend p' p, a, k)
+    | PApp (p, a) -> PApp (prepend p' p, a)
   ;;
 
   module Rev = struct
     type 'a rpath =
       | RPNil
       | RPProj of 'a rpath * Var.t
-      | RPApp of 'a rpath * 'a * Kind.t option
+      | RPApp of 'a rpath * 'a
 
     type 'a t = 'a rpath
 
@@ -309,7 +314,7 @@ module Path = struct
       let rec aux acc = function
         | RPNil -> acc
         | RPProj (r, x) -> aux (PProj (acc, x)) r
-        | RPApp (r, x, k) -> aux (PApp (acc, f x, k)) r
+        | RPApp (r, x) -> aux (PApp (acc, f x)) r
       in
       aux p r
     ;;
@@ -323,7 +328,7 @@ module Path = struct
     let rec aux acc = function
       | PVar a -> a, acc
       | PProj (p, x) -> aux (Rev.RPProj (acc, x)) p
-      | PApp (p, x, k) -> aux (Rev.RPApp (acc, f x, k)) p
+      | PApp (p, x) -> aux (Rev.RPApp (acc, f x)) p
     in
     aux Rev.RPNil p
   ;;
@@ -347,12 +352,13 @@ module Type = struct
     | TWrapped of modu
   [@@deriving show]
 
-  and modu = TMod of TVar.t * Kind.t option * typ [@@deriving show]
+  and modu = TMod of TVar.t * typ [@@deriving show]
 
   and cons =
-    | CRecord of (Var.t * cons) list
-    | CLam of TVar.t * Kind.t option * cons
+    | CEmpty
     | CType of typ
+    | CLam of TVar.t * cons
+    | CRecord of (Var.t * cons) list [@printer Format.pp_print_record Var.pp pp_cons]
   [@@deriving show]
 
   and typ = T of view
@@ -369,16 +375,14 @@ module Type = struct
   module Cons = struct
     type t = cons
 
-    let kind c =
-      let rec aux = function
-        | CRecord xs -> Kind.KRecord (List.map (fun (l, c) -> l, aux c) xs)
-        | CLam (_, Some k, c) -> Kind.KArrow (k, aux c)
-        | CLam (_, None, c) -> aux c
-        | CType _ -> Kind.KType
-      in
-      Option.map aux c
+    let rec kind = function
+      | CEmpty -> Kind.KEmpty
+      | CType _ -> Kind.KType
+      | CLam (x, c) -> Kind.KArrow (TVar.kind x, kind c)
+      | CRecord xs -> Kind.KRecord (List.Assoc.map kind xs)
     ;;
 
+    let equal = ( = )
     let pp = pp_cons
   end
 
@@ -386,7 +390,7 @@ module Type = struct
     let path_to_cons_path = Path.map (fun a -> CType (wrap (TAbstr (PVar a))))
 
     let intro_to_singleton p =
-      wrap (TSingleton (TMod (TVar.null, None, wrap (TAbstr (path_to_cons_path p)))))
+      wrap (TSingleton (TMod (TVar.empty, wrap (TAbstr (path_to_cons_path p)))))
     ;;
   end
   [@@deprecated]
@@ -394,16 +398,15 @@ module Type = struct
   let pp ppf t = pp_view ppf (view t)
 
   let is_path path t =
-    let aux a = function
-      | TAbstr (PVar a') -> TVar.equal a' a
-      | _ -> false
-    in
-    let aux a = function
-      | CType t -> aux a (view t)
+    let eq a = function
+      | CType t ->
+        (match view t with
+         | TAbstr (PVar a') -> TVar.equal a' a
+         | _ -> false)
       | _ -> false
     in
     match view t with
-    | TAbstr p -> Path.equal aux path p
+    | TAbstr p -> Path.equal eq path p
     | _ -> false
   ;;
 
@@ -413,21 +416,22 @@ module Type = struct
       | TInfer _ -> true (* Because only small types can be infered *)
       | TAbstr p -> path env p
       | TPrim _ -> true
-      | TArrow (TMod (a1, _, t1), Explicit Impure, t2) ->
+      | TArrow (TMod (a1, t1), Explicit Impure, t2) ->
         let env = TVar.Set.add a1 env in
         typ env t1 && modu env t2
-      | TArrow (TMod (_, _, _), (Explicit Pure | Implicit), _) -> false
+      | TArrow (TMod (_, _), (Explicit Pure | Implicit), _) -> false
       | TRecord xs -> List.for_all (fun (_, t) -> typ env t) xs
       | TSingleton t -> modu env t
       | TWrapped _ -> true
-    and modu env (TMod (a, _, t)) = typ (TVar.Set.add a env) t
+    and modu env (TMod (a, t)) = typ (TVar.Set.add a env) t
     and path env = function
       | Path.PVar a -> not (TVar.Set.mem a env)
-      | Path.PApp (p, t, _) -> path env p && cons env t
+      | Path.PApp (p, t) -> path env p && cons env t
       | Path.PProj (p, _) -> path env p
     and cons env = function
+      | CEmpty -> true
       | CType t -> typ env t
-      | CLam (_, _, t) -> cons env t
+      | CLam (_, t) -> cons env t
       | CRecord xs -> List.for_all (fun (_, t) -> cons env t) xs
     in
     typ TVar.Set.empty t
@@ -441,20 +445,21 @@ module Type = struct
         true
       | TAbstr p -> path env p
       | TPrim _ -> true
-      | TArrow (TMod (a1, _, t1), _, t2) ->
+      | TArrow (TMod (a1, t1), _, t2) ->
         let env = TVar.Set.add a1 env in
         typ env t1 && modu env t2
       | TRecord ts -> List.for_all (fun (_, t) -> typ env t) ts
       | TSingleton t -> modu env t
       | TWrapped t -> modu env t
-    and modu env (TMod (a, _, t)) = typ (TVar.Set.add a env) t
+    and modu env (TMod (a, t)) = typ (TVar.Set.add a env) t
     and path env = function
       | Path.PVar a -> TVar.Set.mem a env
-      | Path.PApp (p, c, _) -> path env p && cons env c
+      | Path.PApp (p, c) -> path env p && cons env c
       | Path.PProj (p, _) -> path env p
     and cons env = function
+      | CEmpty -> true
       | CType t -> typ env t
-      | CLam (a, _, t) -> cons (TVar.Set.add a env) t
+      | CLam (a, t) -> cons (TVar.Set.add a env) t
       | CRecord ts -> List.for_all (fun (_, t) -> cons env t) ts
     in
     typ (UVar.scope z) t
@@ -491,23 +496,23 @@ module Subst = struct
     | TInfer _ -> CType t
     | TAbstr p -> path ~rename f p
     | TPrim p -> CType (TPrim p |> Type.wrap)
-    | TArrow (TMod (a1, k1, t1), eff, t2) ->
+    | TArrow (TMod (a1, t1), eff, t2) ->
       let a1, rename = freshen a1 rename in
-      let t = TArrow (TMod (a1, k1, typ ~rename f t1), eff, modu ~rename f t2) in
+      let t = TArrow (TMod (a1, typ ~rename f t1), eff, modu ~rename f t2) in
       CType (Type.wrap t)
     | TRecord xs ->
       CType (TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap)
     | TSingleton t -> CType (TSingleton (modu ~rename f t) |> Type.wrap)
     | TWrapped t -> CType (TWrapped (modu ~rename f t) |> Type.wrap)
 
-  and modu ?(rename = TVar.Map.empty) f (TMod (a, k, t)) =
+  and modu ?(rename = TVar.Map.empty) f (TMod (a, t)) =
     let a, rename = freshen a rename in
-    TMod (a, k, typ ~rename f t)
+    TMod (a, typ ~rename f t)
 
   and cons ?(rename = TVar.Map.empty) f = function
+    | CEmpty -> CEmpty
     | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons ~rename f t) xs)
-    | CLam (a, k, t) ->
-      freshen a rename |> fun (a, rename) -> CLam (a, k, cons ~rename f t)
+    | CLam (a, t) -> freshen a rename |> fun (a, rename) -> CLam (a, cons ~rename f t)
     | CType t -> ctyp ~rename f t
 
   and path ?(rename = TVar.Map.empty) f p =
@@ -535,20 +540,15 @@ module Subst = struct
             | None -> CType (TAbstr (PProj (p, x)) |> Type.wrap))
          | CType t -> CType (TAbstr (PProj (unabstr t, x)) |> Type.wrap)
          | _ -> assert false)
-      | PApp (p, c, k) ->
+      | PApp (p, c) ->
         (match aux p with
-         | CLam (a', k', c') ->
-           assert (Kind.equal k' k);
+         | CLam (a', c') ->
+           (* assert (Kind.equal (TVar.kind a') (Type.Cons.kind c)); *)
            cons (one a' c) c'
-         | CType t -> CType (TAbstr (PApp (unabstr t, c, k)) |> Type.wrap)
+         | CType t -> CType (TAbstr (PApp (unabstr t, c)) |> Type.wrap)
          | _ -> assert false)
     in
     aux p
-  ;;
-
-  let one_opt a = function
-    | None -> id
-    | Some p -> one a p
   ;;
 end
 
@@ -558,25 +558,25 @@ module Zipper : sig
   val empty : t
   val of_path : TVar.t Path.t -> t
   val path : TVar.t -> t -> TVar.t Path.t
-  val lam : TVar.t -> Kind.t option -> t -> t
+  val lam : TVar.t -> t -> t
   val field : Var.t -> t -> t
   val set : Type.typ -> t -> t
   val up : t -> t
-  val get : t -> Type.cons option
-  val finish : t -> Type.cons option
+  val get : t -> Type.cons
+  val finish : t -> Type.cons
   val subst : TVar.t -> t -> Type.cons Path.t -> Type.cons
   val pp : Format.formatter -> t -> unit
 end = struct
   type trace =
     | TRecord of Var.t * (Var.t * Type.cons) list
-    | TLam of TVar.t * Kind.t option
+    | TLam of TVar.t
 
   type t = trace list * Type.cons option
 
   let empty = [], None
 
-  let lam a k = function
-    | z, (None | Some (Type.CLam _)) -> TLam (a, k) :: z, None
+  let lam a = function
+    | z, (None | Some (Type.CLam _)) -> TLam a :: z, None
     | _, Some _ -> invalid_arg "Zipper.lam"
   ;;
 
@@ -591,36 +591,40 @@ end = struct
   let rec of_path = function
     | Path.PVar _ -> empty
     | Path.PProj (p, x) -> field x (of_path p)
-    | Path.PApp (p, a, k) -> lam a k (of_path p)
+    | Path.PApp (p, a) -> lam a (of_path p)
   ;;
 
   let path a (z, _) =
     let rec aux = function
       | [] -> Path.PVar a
       | TRecord (x, _) :: zs -> Path.PProj (aux zs, x)
-      | TLam (a, k) :: zs -> Path.PApp (aux zs, a, k)
+      | TLam a :: zs -> Path.PApp (aux zs, a)
     in
     aux z
   ;;
 
   let up = function
     | TRecord (x, xs) :: ts, Some c -> ts, Some (Type.CRecord (List.rev ((x, c) :: xs)))
-    | TRecord (_, []) :: ts, None -> ts, None
-    | TRecord (_, xs) :: ts, None -> ts, Some (Type.CRecord (List.rev xs))
-    | TLam (a, k) :: ts, Some c -> ts, Some (Type.CLam (a, k, c))
-    | TLam (_, _) :: ts, None -> ts, None
+    | TRecord (_, xs) :: ts, None ->
+      ts, Some (Type.CRecord (List.rev xs)) (* TODO: remove? *)
+    | TLam a :: ts, Some c -> ts, Some (Type.CLam (a, c))
+    | TLam _ :: ts, None -> ts, None (* TODO: remove? *)
     | [], _ -> invalid_arg "Zipper.up"
   ;;
 
-  let get (_, tc) = tc
+  let get = function
+    | _, Some c -> c
+    | _, None -> Type.CEmpty
+  ;;
 
   let rec finish = function
-    | [], tc -> tc
+    | [], Some c -> c
+    | [], None -> Type.CEmpty
     | z -> finish (up z)
   ;;
 
-  let subst a z = Subst.one_opt a (finish z)
-  let pp ppf x = Format.pp_print_option Type.Cons.pp ppf (finish x)
+  let subst a z = Subst.one a (finish z)
+  let pp ppf x = Type.Cons.pp ppf (finish x)
 end
 
 module Expr = struct
@@ -631,17 +635,17 @@ module Expr = struct
     | EStruct of (bind list * (Var.t * Type.t) list)
     | EProj of expr * Var.t * Type.t
     | EFun of Var.t * Type.modu * Type.feff * modu
-    | EApp of expr * Type.cons option * Type.feff * expr
+    | EApp of expr * Type.cons * Type.feff * expr
     | EType of Type.modu
     | EExtern of string * Type.t
     | EWrap of modu * Type.modu
     | EUnwrap of expr
-    | EInst of expr * Type.cons option * Type.t
+    | EInst of expr * Type.cons * Type.t
     | EGen of Type.modu * expr
-    | ESeal of modu * Type.cons option * Type.t
+    | ESeal of modu * Type.cons * Type.t
   [@@deriving show]
 
-  and modu = EMod of TVar.t * Kind.t option * expr [@@deriving show]
+  and modu = EMod of TVar.t * expr [@@deriving show]
 
   and bind =
     | BVal of Var.t * expr

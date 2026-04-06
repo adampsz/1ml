@@ -12,136 +12,85 @@ end
 module Flat = struct
   type 'a t =
     | FTyp of 'a
-    | FRecord of (S.Var.t * 'a t) list
+    | FRecord of (S.Var.t * 'a t) list [@polyprinter Format.pp_print_record S.Var.pp]
+  [@@deriving show]
 
-  let record = function
-    | [] -> None
-    | xs -> Some (FRecord xs)
-  ;;
-
-  let field x = function
-    | None -> []
-    | Some y -> [ x, y ]
-  ;;
-
-  let fields = function
-    | None -> []
-    | Some (FRecord xs) -> xs
-    | Some (FTyp _) -> invalid_arg "Flat.fields"
-  ;;
-
-  let equal eq xs ys =
-    let rec aux xs ys =
-      match xs, ys with
-      | FTyp x, FTyp y -> eq x y
-      | FRecord xs, FRecord ys ->
-        List.equal (fun (a, x) (b, y) -> S.Var.equal a b && aux x y) xs ys
-      | _, _ -> false
-    in
-    Option.equal aux xs ys
-  ;;
-
-  let iter f xs =
-    let rec aux = function
-      | FTyp x -> f x
-      | FRecord xs -> List.iter (fun (_, xs) -> aux xs) xs
-    in
-    Option.iter aux xs
-  ;;
-
-  let fold_left f acc xs =
-    let rec aux acc = function
-      | FTyp x -> f acc x
-      | FRecord xs -> List.fold_left (fun acc (_, xs) -> aux acc xs) acc xs
-    in
-    Option.fold ~none:acc ~some:(aux acc) xs
-  ;;
-
-  let fold_right f xs acc =
-    let rec aux acc = function
-      | FTyp x -> f x acc
-      | FRecord xs -> List.fold_right (fun (_, xs) acc -> aux acc xs) xs acc
-    in
-    Option.fold ~none:acc ~some:(aux acc) xs
-  ;;
-
-  let fold_left2 f acc xs ys =
-    let rec aux acc xs ys =
-      match xs, ys with
-      | FTyp x, FTyp y -> f acc x y
-      | FRecord xs, FRecord ys ->
-        List.fold_left2 (fun acc (_, xs) (_, ys) -> aux acc xs ys) acc xs ys
-      | _, _ -> invalid_arg "Flat.fold_left2"
-    in
+  let rec equal eq xs ys =
     match xs, ys with
-    | Some xs, Some ys -> aux acc xs ys
-    | None, None -> acc
-    | _, _ -> invalid_arg "Flat.fold_left2"
+    | FTyp x, FTyp y -> eq x y
+    | FTyp _, _ -> false
+    | FRecord xs, FRecord ys ->
+      List.equal (fun (a, x) (b, y) -> S.Var.equal a b && equal eq x y) xs ys
+    | FRecord _, _ -> false
   ;;
 
-  let fold_right2 f xs ys acc =
-    let rec aux xs ys acc =
-      match xs, ys with
-      | FTyp x, FTyp y -> f x y acc
-      | FRecord xs, FRecord ys ->
-        List.fold_right2 (fun (_, xs) (_, ys) acc -> aux xs ys acc) xs ys acc
-      | _, _ -> invalid_arg "Flat.fold_right2"
-    in
-    match xs, ys with
-    | Some xs, Some ys -> aux xs ys acc
-    | None, None -> acc
-    | _, _ -> invalid_arg "Flat.fold_right2"
+  let rec iter f = function
+    | FTyp x -> f x
+    | FRecord xs -> List.iter (fun (_, xs) -> iter f xs) xs
+  ;;
+
+  let rec fold_left f acc = function
+    | FTyp x -> f acc x
+    | FRecord xs -> List.fold_left (fun acc (_, xs) -> fold_left f acc xs) acc xs
+  ;;
+
+  let rec fold_right f xs acc =
+    match xs with
+    | FTyp x -> f x acc
+    | FRecord xs -> List.fold_right (fun (_, xs) acc -> fold_right f xs acc) xs acc
   ;;
 
   let cardinal = fold_left (fun acc _ -> acc + 1) 0
 
-  let map f xs =
-    let rec aux = function
-      | FTyp x -> FTyp (f x)
-      | FRecord xs -> FRecord (List.map (fun (x, xs) -> x, aux xs) xs)
-    in
-    Option.map aux xs
-  ;;
-
-  let map2 f xs ys =
-    let rec aux xs ys =
-      match xs, ys with
-      | FTyp x, FTyp y -> FTyp (f x y)
-      | FRecord xs, FRecord ys ->
-        FRecord (List.map2 (fun (x, xs) (_, ys) -> x, aux xs ys) xs ys)
-      | _ -> invalid_arg "Flat.map2"
-    in
+  let rec fold_left2 f acc xs ys =
     match xs, ys with
-    | Some xs, Some ys -> Some (aux xs ys)
-    | None, None -> None
-    | _ -> invalid_arg "Flat.map2"
+    | FTyp x, FTyp y -> f acc x y
+    | FTyp _, _ -> invalid_arg "Flat.fold_left2"
+    | FRecord xs, FRecord ys ->
+      List.fold_left2 (fun acc (_, xs) (_, ys) -> fold_left2 f acc xs ys) acc xs ys
+    | FRecord _, _ -> invalid_arg "Flat.fold_left2"
   ;;
 
-  let pp pp ppf xs =
-    let rec aux ppf = function
-      | FTyp x -> pp ppf x
-      | FRecord xs ->
-        let pp_sep ppf () = Format.fprintf ppf "; "
-        and pp_item ppf (x, xs) = Format.fprintf ppf "%a: %a" S.Var.pp x aux xs in
-        Format.fprintf ppf "{ %a }" (Format.pp_print_list ~pp_sep pp_item) xs
-    in
-    match xs with
-    | Some xs -> aux ppf xs
-    | None -> Format.fprintf ppf "{ }"
+  let rec fold_right2 f xs ys acc =
+    match xs, ys with
+    | FTyp x, FTyp y -> f x y acc
+    | FTyp _, _ -> invalid_arg "Flat.fold_right2"
+    | FRecord xs, FRecord ys ->
+      List.fold_right2 (fun (_, xs) (_, ys) acc -> fold_right2 f xs ys acc) xs ys acc
+    | FRecord _, _ -> invalid_arg "Flat.fold_right2"
+  ;;
+
+  let rec map f = function
+    | FTyp x -> FTyp (f x)
+    | FRecord xs -> FRecord (List.map (fun (x, xs) -> x, map f xs) xs)
+  ;;
+
+  let rec map2 f xs ys =
+    match xs, ys with
+    | FTyp x, FTyp y -> FTyp (f x y)
+    | FRecord xs, FRecord ys ->
+      FRecord (List.map2 (fun (x, xs) (_, ys) -> x, map2 f xs ys) xs ys)
+    | _ -> invalid_arg "Flat.map2"
   ;;
 end
 
 module Flatten = struct
-  let kind k =
-    let arrow (Ex k1 : Ex.kind) (Ex k2 : Ex.kind) : Ex.kind = Ex (KArrow (k1, k2)) in
-    let rec aux args = function
-      | S.Kind.KType -> Flat.FTyp (args (Ex T.Kind.KType : Ex.kind))
+  let rec kind k =
+    let rec aux acc = function
+      | S.Kind.KEmpty -> None
+      | S.Kind.KType -> Some (Flat.FTyp (acc (Ex T.Kind.KType : Ex.kind)))
       | S.Kind.KArrow (k1, k2) ->
-        let f k1 k2 = args (Flat.fold_right arrow (Some k1) k2) in
-        aux (f (aux Fun.id k1)) k2
-      | S.Kind.KRecord xs -> Flat.FRecord (List.map (fun (x, k) -> x, aux args k) xs)
+        let arrow (Ex k1 : Ex.kind) (Ex k2 : Ex.kind) : Ex.kind = Ex (KArrow (k1, k2)) in
+        let k1 = kind k1 in
+        aux (fun k2 -> acc (Flat.fold_right arrow k1 k2)) k2
+      | S.Kind.KRecord xs ->
+        (match List.Assoc.filter_map (fun k -> aux acc k) xs with
+         | [] -> None
+         | xs -> Some (Flat.FRecord xs))
     in
-    Option.map (aux Fun.id) k
+    match aux Fun.id k with
+    | Some k -> k
+    | None -> Flat.FRecord []
   ;;
 
   let tvar k = Flat.map (fun (Ex k : Ex.kind) : Ex.tvar -> Ex (T.TVar.fresh k)) (kind k)
@@ -226,12 +175,12 @@ module Env : sig
   val empty : t
   val add_var : S.Var.t -> t -> t * T.Var.t
   val find_var : S.Var.t -> t -> T.Var.t
-  val enter_mod : S.TVar.t -> S.Kind.t option -> t -> t * Ex.tvar Flat.t option
+  val enter_mod : S.TVar.t -> t -> t * Ex.tvar Flat.t
   val enter_field : S.Var.t -> t -> t
   val enter_arrow : S.Type.modu -> t -> t
-  val add_tvar : S.TVar.t -> S.Kind.t option -> t -> t * Ex.tvar Flat.t option
+  val add_tvar : S.TVar.t -> t -> t * Ex.tvar Flat.t
   val find_tvar : S.TVar.t -> t -> Ex.tvar Flat.t
-  val module_tvars : t -> Ex.tvar Flat.t option
+  val module_tvars : t -> Ex.tvar Flat.t
 end = struct
   type t =
     { module_tvars : Ex.tvar Flat.t option
@@ -253,30 +202,26 @@ end = struct
     | None -> Format.kasprintf failwith "unbound variable: %a" S.Var.pp x
   ;;
 
-  let add_tvar a k env =
-    let a' = Flatten.tvar k in
-    match a' with
-    | None -> env, None
-    | Some a' ->
+  let add_tvar a env =
+    let a' = Flatten.tvar (S.TVar.kind a) in
+    if not (S.Kind.is_empty (S.TVar.kind a))
+    then
       debug (fun m ->
         let pp_tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
-        m ~header:"tvar" "%a -> %a" S.TVar.pp a (Flat.pp pp_tvar) (Some a'));
-      { env with tvars = S.TVar.Map.add a a' env.tvars }, Some a'
+        m ~header:"tvar" "%a -> %a" S.TVar.pp a (Flat.pp pp_tvar) a');
+    { env with tvars = S.TVar.Map.add a a' env.tvars }, a'
   ;;
 
-  let enter_mod a k env =
-    let env, a' = add_tvar a k env in
-    { env with module_tvars = a' }, a'
+  let enter_mod a env =
+    let env, a' = add_tvar a env in
+    { env with module_tvars = Some a' }, a'
   ;;
 
   let enter_field x env =
     match env.module_tvars with
+    | Some (Flat.FRecord xs) -> { env with module_tvars = List.assoc_opt x xs }
     | None -> env
-    | Some (Flat.FRecord xs) ->
-      let aux (y, t) = if S.Var.equal x y then Some t else None in
-      let module_tvars = List.find_map aux xs in
-      { env with module_tvars }
-    | Some (Flat.FTyp _) -> invalid_arg "Env.enter_field"
+    | _ -> invalid_arg "Env.enter_field"
   ;;
 
   let enter_arrow _ _ = failwith "todo enter arrow"
@@ -287,7 +232,11 @@ end = struct
     | None -> Format.kasprintf failwith "unbound type variable: %a" S.TVar.pp a
   ;;
 
-  let module_tvars env = env.module_tvars
+  let module_tvars env =
+    match env.module_tvars with
+    | Some a -> a
+    | None -> Flat.FRecord []
+  ;;
 end
 
 module Type = struct
@@ -309,21 +258,17 @@ module Type = struct
       Format.kasprintf failwith "unresolved type inference variable: %a" S.Type.pp t
     | S.Type.TPrim p -> Ex (T.Type.TPrim p)
     | S.Type.TAbstr p -> path env p
-    | S.Type.TArrow (TMod (a1, k1, t1), eff, t2) ->
-      let env, a1 = Env.enter_mod a1 k1 env in
+    | S.Type.TArrow (TMod (a1, t1), eff, t2) ->
+      let env, a1 = Env.enter_mod a1 env in
       let t = Sugar.Type.eff_arrow (typ env t1) eff (modu env t2) in
-      let t = Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) a1 t in
-      Ex t
+      Ex (Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) a1 t)
     | S.Type.TRecord xs ->
-      let t = T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs) in
-      Ex t
+      Ex (T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs))
     | S.Type.TSingleton t -> Ex (Sugar.Type.singleton (modu env t))
     | S.Type.TWrapped t -> Ex (Sugar.Type.wrap (modu env t))
 
-  and modu env (TMod (a, k, t)) =
-    (* let kk = S.Type.kind (PVar a) t in
-    assert (S.Kind.equal k kk); *)
-    let env, a = Env.enter_mod a k env in
+  and modu env (TMod (a, t)) =
+    let env, a = Env.enter_mod a env in
     Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t)
 
   and path env p =
@@ -331,29 +276,34 @@ module Type = struct
       (fun m -> m ~header:"path" "")
       (fun (Ex t : Ex.typ) m -> m ~header:"path" "~> %t" (fun ppf -> T.Type.pp ppf t))
     @@ fun () ->
-    let rec aux args a r =
+    let rec aux acc a r =
       match a, r with
-      | Flat.FTyp (Ex x : Ex.tvar), S.Path.Rev.RPNil -> args (Ex (T.Type.TVar x) : Ex.typ)
-      | Flat.FRecord xs, S.Path.Rev.RPProj (r, x) -> aux args (List.assoc x xs) r
-      | a, S.Path.Rev.RPApp (r1, c2, _) ->
-        let f t2 t1 = Flat.fold_left Sugar.Type.app (args t1) t2 in
-        aux (f (cons env (Some c2))) a r1
+      | Flat.FTyp (Ex x : Ex.tvar), S.Path.Rev.RPNil -> acc (Ex (T.Type.TVar x) : Ex.typ)
+      | Flat.FRecord xs, S.Path.Rev.RPProj (r, x) -> aux acc (List.assoc x xs) r
+      | a, S.Path.Rev.RPApp (r1, c2) ->
+        let t2 = cons env c2 in
+        aux (fun t1 -> Flat.fold_left Sugar.Type.app (acc t1) t2) a r1
       | _ -> assert false
     in
     let a, r = S.Path.rev p in
     aux Fun.id (Env.find_tvar a env) r
 
-  and cons env (c : _ option) : _ Flat.t option =
-    let lam (Ex a1 : Ex.tvar) (Ex c2 : Ex.typ) : Ex.typ = Ex (TLam (a1, c2)) in
-    let rec aux env args = function
-      | S.Type.CType t -> Flat.FTyp (args (ctyp env t))
-      | S.Type.CLam (a1, k1, c2) ->
-        let env, a1 = Env.add_tvar a1 k1 env in
-        let f a1 c2 = args (Flat.fold_right lam a1 c2) in
-        aux env (f a1) c2
-      | S.Type.CRecord xs -> Flat.FRecord (List.map (fun (x, k) -> x, aux env args k) xs)
+  and cons env c =
+    let rec aux env acc = function
+      | S.Type.CEmpty -> None
+      | S.Type.CType t -> Some (Flat.FTyp (acc (ctyp env t)))
+      | S.Type.CLam (a1, c2) ->
+        let lam (Ex a1 : Ex.tvar) (Ex c2 : Ex.typ) : Ex.typ = Ex (TLam (a1, c2)) in
+        let env, a1 = Env.add_tvar a1 env in
+        aux env (fun c2 -> acc (Flat.fold_right lam a1 c2)) c2
+      | S.Type.CRecord xs ->
+        (match List.Assoc.filter_map (fun k -> aux env acc k) xs with
+         | [] -> None
+         | xs -> Some (Flat.FRecord xs))
     in
-    Option.map (aux env Fun.id) c
+    match aux env Fun.id c with
+    | Some c -> c
+    | None -> Flat.FRecord []
   ;;
 end
 
@@ -365,24 +315,24 @@ module Elab = struct
     @@ fun () ->
     match S.Type.view t with
     | S.Type.TPrim PUnit -> T.Expr.EConst (CUnit ())
-    | S.Type.TArrow (TMod (a1, k1, t1), eff, TMod (a2, k2, t2)) ->
-      let env1, a1 = Env.enter_mod a1 k1 env in
+    | S.Type.TArrow (TMod (a1, t1), eff, TMod (a2, t2)) ->
+      let env1, a1 = Env.enter_mod a1 env in
       (* TODO: What to do with a2? *)
-      let env2, a2 = Env.enter_mod a2 k2 env1 in
+      let env2, a2 = Env.enter_mod a2 env1 in
       let e = materialize env2 t2 in
       let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env1 t1) eff e in
       Flat.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a1 e
     | S.Type.TRecord ts ->
       let f (x, t) = S.Var.name x, materialize env t in
       T.Expr.ERecord (List.map f ts)
-    | S.Type.TSingleton (TMod (a, k, t)) ->
-      let env, a = Env.enter_mod a k env in
+    | S.Type.TSingleton (TMod (a, t)) ->
+      let env, a = Env.enter_mod a env in
       let t = Type.typ env t in
       let t = Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a t in
       Sugar.Expr.singleton t
-    | S.Type.TWrapped (TMod (a, k, t)) ->
+    | S.Type.TWrapped (TMod (a, t)) ->
       (* TODO: What to do with a? *)
-      let env, a = Env.enter_mod a k env in
+      let env, a = Env.enter_mod a env in
       Sugar.Expr.wrap (materialize env t)
     | _ -> assert false
   ;;
@@ -418,8 +368,8 @@ module Elab = struct
       let a = Env.module_tvars env in
       let e = Sugar.Expr.repack a tmp e1 e2 (Type.typ env t) in
       e
-    | S.Expr.EFun (x, TMod (a, k, t), eff, e) ->
-      let env, a = Env.add_tvar a k env in
+    | S.Expr.EFun (x, TMod (a, t), eff, e) ->
+      let env, a = Env.add_tvar a env in
       let t1 = Type.typ env t in
       let env, x = Env.add_var x env in
       let e = modu env e in
@@ -427,7 +377,7 @@ module Elab = struct
       Flat.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
     | S.Expr.EApp (e1, tc, eff, e2) ->
       let e = Flat.fold_left Sugar.Expr.ty_app (expr env e1) (Type.cons env tc) in
-      let env, _ = Env.enter_mod S.TVar.null None env in
+      let env, _ = Env.enter_mod S.TVar.empty env in
       let e = Sugar.Expr.eff_app e eff (expr env e2) in
       e
     | S.Expr.EType t -> Sugar.Expr.singleton (Type.modu env t)
@@ -440,14 +390,14 @@ module Elab = struct
       let e = Flat.fold_left (fun e (Ex t : Ex.typ) -> T.Expr.ETyApp (e, t)) e tc in
       let e = Sugar.Expr.eff_app e Implicit (materialize env t) in
       e
-    | S.Expr.EGen (TMod (a, k, t), e) ->
-      let env, a = Env.add_tvar a k env in
+    | S.Expr.EGen (TMod (a, t), e) ->
+      let env, a = Env.add_tvar a env in
       let e = expr env e in
       let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env t) Implicit e in
       Flat.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
-    | S.Expr.ESeal (EMod (a, k, e), tc, t) ->
+    | S.Expr.ESeal (EMod (a, e), tc, t) ->
       let x = T.Var.fresh () in
-      let env', a = Env.enter_mod a k env in
+      let env', a = Env.enter_mod a env in
       let e1 = expr env' e in
       let e2 =
         let e = T.Expr.EVar x in
@@ -456,8 +406,8 @@ module Elab = struct
       in
       Sugar.Expr.unpack a x e1 e2
 
-  and modu env (S.Expr.EMod (a, k, e)) =
-    let env, _ = Env.enter_mod a k env in
+  and modu env (S.Expr.EMod (a, e)) =
+    let env, _ = Env.enter_mod a env in
     expr env e
 
   and bind env b =
@@ -467,15 +417,12 @@ module Elab = struct
     @@ fun () ->
     let proj tmp env (x, _) =
       let env, x' = Env.add_var x env in
-      env, (x', None, T.Expr.EProj (T.Expr.EVar tmp, S.Var.name x))
-    and proj_a env x =
-      Option.map (fun a -> x, a) (Env.module_tvars (Env.enter_field x env))
-    in
+      env, (x', Flat.FRecord [], T.Expr.EProj (T.Expr.EVar tmp, S.Var.name x))
+    and proj_a env x = x, Env.module_tvars (Env.enter_field x env) in
     match b with
     | S.Expr.BIncl (_, e, ts, ks) ->
       let tmp, e = T.Var.fresh (), expr env e in
-      let a = List.filter_map (proj_a env) ks in
-      let a = if a = [] then None else Some (Flat.FRecord a) in
+      let a = Flat.FRecord (List.map (proj_a env) ks) in
       let env, es = List.fold_left_map (proj tmp) env ts in
       env, (tmp, a, e) :: es
     | S.Expr.BVal (x, e) ->
@@ -498,5 +445,3 @@ module Elab = struct
     @@ fun () -> modu env node
   ;;
 end
-
-open Format

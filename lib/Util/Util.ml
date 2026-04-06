@@ -38,6 +38,37 @@ module Counter = struct
   end
 end
 
+module Once : sig
+  type 'a t
+
+  val make : unit -> 'a t
+  val from_val : 'a -> 'a t
+  val set : 'a t -> 'a -> unit
+  val get : 'a t -> 'a
+  val get_opt : 'a t -> 'a option
+  val is_set : 'a t -> bool
+end = struct
+  type 'a t = 'a option ref
+
+  let make () = ref None
+  let from_val x = ref (Some x)
+
+  let set c x =
+    match !c with
+    | Some _ -> invalid_arg "Once.set"
+    | None -> c := Some x
+  ;;
+
+  let get c =
+    match !c with
+    | Some x -> x
+    | None -> invalid_arg "Once.get"
+  ;;
+
+  let get_opt c = !c
+  let is_set c = Option.is_some !c
+end
+
 module String = struct
   include String
 
@@ -54,13 +85,38 @@ module String = struct
   module Map = Map.Make (String)
 end
 
+module Option = struct
+  include Option
+
+  let fold2 ~none ~some x y =
+    match x, y with
+    | Some x, Some y -> some x y
+    | None, None -> none
+    | _ -> invalid_arg "Option.fold2"
+  ;;
+
+  let map2 f x y =
+    match x, y with
+    | Some x, Some y -> Some (f x y)
+    | None, None -> None
+    | _ -> invalid_arg "Option.map2"
+  ;;
+end
+
 module List : sig
   include module type of List
 
   val fold_right_filter : ('a -> 'acc -> bool * 'acc) -> 'a list -> 'acc -> 'a list * 'acc
   val fold_right_map : ('a -> 'acc -> 'b * 'acc) -> 'a list -> 'acc -> 'b list * 'acc
-  val assoc_update : 'k -> ('v option -> 'v option) -> ('k * 'v) list -> ('k * 'v) list
-  val assoc_set : 'k -> 'v option -> ('k * 'v) list -> ('k * 'v) list
+
+  module Assoc : sig
+    val get : 'k -> ('k * 'v) list -> 'v
+    val get_opt : 'k -> ('k * 'v) list -> 'v option
+    val set : 'k -> 'v option -> ('k * 'v) list -> ('k * 'v) list
+    val update : 'k -> ('v option -> 'v option) -> ('k * 'v) list -> ('k * 'v) list
+    val map : ('v -> 'w) -> ('k * 'v) list -> ('k * 'w) list
+    val filter_map : ('v -> 'w option) -> ('k * 'v) list -> ('k * 'w) list
+  end
 end = struct
   include List
 
@@ -85,20 +141,30 @@ end = struct
     aux xs acc
   ;;
 
-  let assoc_update x f xs =
-    let add_opt xs = function
-      | None -> xs
-      | Some v -> (x, v) :: xs
-    in
-    let rec aux = function
-      | [] -> add_opt [] (f None)
-      | (y, v) :: xs when Stdlib.compare x y = 0 -> add_opt xs (f (Some v))
-      | xv :: xs -> xv :: aux xs
-    in
-    aux xs
-  ;;
+  module Assoc = struct
+    let get = assoc
+    let get_opt = assoc_opt
 
-  let assoc_set x v xs = assoc_update x (Fun.const v) xs
+    let update x f xs =
+      let add_opt xs = function
+        | None -> xs
+        | Some v -> (x, v) :: xs
+      in
+      let rec aux = function
+        | [] -> add_opt [] (f None)
+        | (y, v) :: xs when Stdlib.compare x y = 0 -> add_opt xs (f (Some v))
+        | xv :: xs -> xv :: aux xs
+      in
+      aux xs
+    ;;
+
+    let set x v xs = update x (Fun.const v) xs
+    let map f xs = List.map (fun (k, v) -> k, f v) xs
+
+    let filter_map f xs =
+      List.filter_map (fun (k, v) -> Option.map (fun v -> k, v) (f v)) xs
+    ;;
+  end
 end
 
 module type HType = sig
@@ -212,14 +278,17 @@ module Format = struct
   include Format
 
   let sink = make_formatter (fun _ _ _ -> ()) (fun _ -> ())
+  let tprintf fmt ppf () = fprintf ppf fmt
 
-  let pp_print_record ?pp_sep ?pp_ksep pp_key pp_value ppf xs =
-    let pp_entry ?(pp_ksep = fun ppf () -> Format.fprintf ppf " :@ ") ppf (k, v) =
-      Format.fprintf ppf "@[<2>%a%a%a@]" pp_key k pp_ksep () pp_value v
-    in
-    let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
-    let pf = Format.fprintf ppf "{@[<hv 1>@;%a%t@]}" in
-    pf (Format.pp_print_list ?pp_sep (pp_entry ?pp_ksep)) xs br
+  let pp_print_record ?(pp_sep = tprintf ",@ ") ?(pp_ksep = tprintf " :@ ") =
+    fun pp_key pp_value ppf -> function
+    | [] -> pp_print_string ppf "{ }"
+    | xs ->
+      let pp_entry ppf (k, v) =
+        fprintf ppf "@[<2>%a%a%a@]" pp_key k pp_ksep () pp_value v
+      in
+      let br = pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
+      fprintf ppf "{@[<hv 1>@;%a%t@]}" (pp_print_list ~pp_sep pp_entry) xs br
   ;;
 
   let with_margin margin pp ppf x =
