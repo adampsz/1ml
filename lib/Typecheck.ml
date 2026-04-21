@@ -346,8 +346,7 @@ module Check = struct
 
   let path_map a f t =
     let aux p =
-      T.Type.CType
-        (T.Type.TAbstr (if T.TVar.equal (T.Path.var p) a then f p else p) |> wrap)
+      T.Type.TAbstr (if T.TVar.equal (T.Path.var p) a then f p else p) |> wrap
     in
     T.Subst.typ aux t
   ;;

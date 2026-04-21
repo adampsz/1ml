@@ -387,7 +387,20 @@ module Type = struct
   end
 
   module Glue = struct
-    let path_to_cons_path = Path.map (fun a -> CType (wrap (TAbstr (PVar a))))
+    let rec concretize a =
+      let rec aux path = function
+        | Kind.KEmpty -> CEmpty
+        | Kind.KType -> CType (TAbstr path |> wrap)
+        | Kind.KRecord xs ->
+          CRecord (List.map (fun (x, k) -> x, aux (Path.PProj (path, x)) k) xs)
+        | Kind.KArrow (k1, k2) ->
+          let a1 = TVar.fresh k1 in
+          CLam (a1, aux (Path.PApp (path, concretize a1)) k2)
+      in
+      aux (PVar a) (TVar.kind a)
+    ;;
+
+    let path_to_cons_path = Path.map concretize
 
     let intro_to_singleton p =
       wrap (TSingleton (TMod (TVar.empty, wrap (TAbstr (path_to_cons_path p)))))
@@ -398,15 +411,8 @@ module Type = struct
   let pp ppf t = pp_view ppf (view t)
 
   let is_path path t =
-    let eq a = function
-      | CType t ->
-        (match view t with
-         | TAbstr (PVar a') -> TVar.equal a' a
-         | _ -> false)
-      | _ -> false
-    in
     match view t with
-    | TAbstr p -> Path.equal eq path p
+    | TAbstr p -> Path.equal (fun _ _ -> true) path p
     | _ -> false
   ;;
 
@@ -487,23 +493,17 @@ module Subst = struct
   ;;
 
   let rec typ ?(rename = TVar.Map.empty) f t =
-    match ctyp ~rename f t with
-    | CType t -> t
-    | _ -> assert false
-
-  and ctyp ?(rename = TVar.Map.empty) f t =
     match Type.view t with
-    | TInfer _ -> CType t
+    | TInfer _ -> t
     | TAbstr p -> path ~rename f p
-    | TPrim p -> CType (TPrim p |> Type.wrap)
+    | TPrim _ -> t
     | TArrow (TMod (a1, t1), eff, t2) ->
       let a1, rename = freshen a1 rename in
       let t = TArrow (TMod (a1, typ ~rename f t1), eff, modu ~rename f t2) in
-      CType (Type.wrap t)
-    | TRecord xs ->
-      CType (TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap)
-    | TSingleton t -> CType (TSingleton (modu ~rename f t) |> Type.wrap)
-    | TWrapped t -> CType (TWrapped (modu ~rename f t) |> Type.wrap)
+      Type.wrap t
+    | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap
+    | TSingleton t -> TSingleton (modu ~rename f t) |> Type.wrap
+    | TWrapped t -> TWrapped (modu ~rename f t) |> Type.wrap
 
   and modu ?(rename = TVar.Map.empty) f (TMod (a, t)) =
     let a, rename = freshen a rename in
@@ -513,42 +513,40 @@ module Subst = struct
     | CEmpty -> CEmpty
     | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons ~rename f t) xs)
     | CLam (a, t) -> freshen a rename |> fun (a, rename) -> CLam (a, cons ~rename f t)
-    | CType t -> ctyp ~rename f t
+    | CType t -> CType (typ ~rename f t)
 
   and path ?(rename = TVar.Map.empty) f p =
     let a, r = Path.rev_map (cons ~rename f) p in
     match TVar.Map.find_opt a rename with
-    | Some a -> CType (TAbstr (Path.Rev.rev a r) |> Type.wrap)
+    | Some a -> TAbstr (Path.Rev.rev a r) |> Type.wrap
     | None -> f (Path.Rev.rev a r)
   ;;
 
-  let id p = CType (Type.wrap (TAbstr p))
+  let id p = TAbstr p |> Type.wrap
 
   let rec one a t p =
-    let unabstr t =
-      match Type.view t with
-      | TAbstr p -> p
-      | _ -> assert false
-    in
     let rec aux = function
-      | PVar a' -> if TVar.equal a' a then t else id (PVar a')
+      | PVar a' -> if TVar.equal a' a then Some t else None
       | PProj (p, x) ->
         (match aux p with
-         | CRecord xs ->
+         | Some (CRecord xs) ->
            (match List.assoc_opt x xs with
-            | Some c -> c
-            | None -> CType (TAbstr (PProj (p, x)) |> Type.wrap))
-         | CType t -> CType (TAbstr (PProj (unabstr t, x)) |> Type.wrap)
+            | Some c -> Some c
+            | None -> None)
+         | None -> None
          | _ -> assert false)
       | PApp (p, c) ->
         (match aux p with
-         | CLam (a', c') ->
-           (* assert (Kind.equal (TVar.kind a') (Type.Cons.kind c)); *)
-           cons (one a' c) c'
-         | CType t -> CType (TAbstr (PApp (unabstr t, c)) |> Type.wrap)
+         | Some (CLam (a', c')) ->
+           assert (Kind.equal (TVar.kind a') (Type.Cons.kind c));
+           Some (cons (one a' c) c')
+         | None -> None
          | _ -> assert false)
     in
-    aux p
+    match aux p with
+    | Some (CType t) -> t
+    | None -> TAbstr p |> Type.wrap
+    | _ -> assert false
   ;;
 end
 
@@ -564,7 +562,7 @@ module Zipper : sig
   val up : t -> t
   val get : t -> Type.cons
   val finish : t -> Type.cons
-  val subst : TVar.t -> t -> Type.cons Path.t -> Type.cons
+  val subst : TVar.t -> t -> Type.cons Path.t -> Type.typ
   val pp : Format.formatter -> t -> unit
 end = struct
   type trace =
