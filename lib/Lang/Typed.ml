@@ -346,10 +346,11 @@ module Type = struct
     | TInfer of view UVar.t
     | TAbstr of cons Path.t
     | TPrim of Prim.t
-    | TArrow of modu * feff * modu
+    | TArrow of modu * feff * typ
     | TRecord of (Var.t * typ) list [@printer Format.pp_print_record Var.pp pp_typ]
     | TSingleton of modu
     | TWrapped of modu
+    | TMod of TVar.t * typ
   [@@deriving show]
 
   and modu = TMod of TVar.t * typ [@@deriving show]
@@ -424,11 +425,12 @@ module Type = struct
       | TPrim _ -> true
       | TArrow (TMod (a1, t1), Explicit Impure, t2) ->
         let env = TVar.Set.add a1 env in
-        typ env t1 && modu env t2
+        typ env t1 && typ env t2
       | TArrow (TMod (_, _), (Explicit Pure | Implicit), _) -> false
       | TRecord xs -> List.for_all (fun (_, t) -> typ env t) xs
       | TSingleton t -> modu env t
       | TWrapped _ -> true
+      | TMod (a, t) -> typ (TVar.Set.add a env) t
     and modu env (TMod (a, t)) = typ (TVar.Set.add a env) t
     and path env = function
       | Path.PVar a -> not (TVar.Set.mem a env)
@@ -453,10 +455,11 @@ module Type = struct
       | TPrim _ -> true
       | TArrow (TMod (a1, t1), _, t2) ->
         let env = TVar.Set.add a1 env in
-        typ env t1 && modu env t2
+        typ env t1 && typ env t2
       | TRecord ts -> List.for_all (fun (_, t) -> typ env t) ts
       | TSingleton t -> modu env t
       | TWrapped t -> modu env t
+      | TMod (a, t) -> typ (TVar.Set.add a env) t
     and modu env (TMod (a, t)) = typ (TVar.Set.add a env) t
     and path env = function
       | Path.PVar a -> TVar.Set.mem a env
@@ -499,11 +502,14 @@ module Subst = struct
     | TPrim _ -> t
     | TArrow (TMod (a1, t1), eff, t2) ->
       let a1, rename = freshen a1 rename in
-      let t = TArrow (TMod (a1, typ ~rename f t1), eff, modu ~rename f t2) in
+      let t = TArrow (TMod (a1, typ ~rename f t1), eff, typ ~rename f t2) in
       Type.wrap t
     | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap
     | TSingleton t -> TSingleton (modu ~rename f t) |> Type.wrap
     | TWrapped t -> TWrapped (modu ~rename f t) |> Type.wrap
+    | TMod (a, t) ->
+      let a, rename = freshen a rename in
+      TMod (a, typ ~rename f t) |> Type.wrap
 
   and modu ?(rename = TVar.Map.empty) f (TMod (a, t)) =
     let a, rename = freshen a rename in
@@ -632,7 +638,7 @@ module Expr = struct
     | ECond of Var.t * expr * expr * Type.t
     | EStruct of (bind list * (Var.t * Type.t) list)
     | EProj of expr * Var.t * Type.t
-    | EFun of Var.t * Type.modu * Type.feff * modu
+    | EFun of Var.t * Type.modu * Type.feff * expr
     | EApp of expr * Type.cons * Type.feff * expr
     | EType of Type.modu
     | EExtern of string * Type.t
@@ -641,6 +647,8 @@ module Expr = struct
     | EInst of expr * Type.cons * Type.t
     | EGen of Type.modu * expr
     | ESeal of modu * Type.cons * Type.t
+    | EMod of TVar.t * expr
+    | EUse of expr
   [@@deriving show]
 
   and modu = EMod of TVar.t * expr [@@deriving show]

@@ -260,12 +260,15 @@ module Type = struct
     | S.Type.TAbstr p -> path env p
     | S.Type.TArrow (TMod (a1, t1), eff, t2) ->
       let env, a1 = Env.enter_mod a1 env in
-      let t = Sugar.Type.eff_arrow (typ env t1) eff (modu env t2) in
+      let t = Sugar.Type.eff_arrow (typ env t1) eff (typ env t2) in
       Ex (Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) a1 t)
     | S.Type.TRecord xs ->
       Ex (T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs))
     | S.Type.TSingleton t -> Ex (Sugar.Type.singleton (modu env t))
     | S.Type.TWrapped t -> Ex (Sugar.Type.wrap (modu env t))
+    | S.Type.TMod (a, t) ->
+      let env, a = Env.enter_mod a env in
+      Ex (Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t))
 
   and modu env (TMod (a, t)) =
     let env, a = Env.enter_mod a env in
@@ -315,12 +318,11 @@ module Elab = struct
     @@ fun () ->
     match S.Type.view t with
     | S.Type.TPrim PUnit -> T.Expr.EConst (CUnit ())
-    | S.Type.TArrow (TMod (a1, t1), eff, TMod (a2, t2)) ->
-      let env1, a1 = Env.enter_mod a1 env in
+    | S.Type.TArrow (TMod (a1, t1), eff, t2) ->
+      let env, a1 = Env.enter_mod a1 env in
       (* TODO: What to do with a2? *)
-      let env2, a2 = Env.enter_mod a2 env1 in
-      let e = materialize env2 t2 in
-      let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env1 t1) eff e in
+      let e = materialize env t2 in
+      let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env t1) eff e in
       Flat.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a1 e
     | S.Type.TRecord ts ->
       let f (x, t) = S.Var.name x, materialize env t in
@@ -334,6 +336,9 @@ module Elab = struct
       (* TODO: What to do with a? *)
       let env, a = Env.enter_mod a env in
       Sugar.Expr.wrap (materialize env t)
+    | S.Type.TMod (a, t) ->
+      let env, a = Env.enter_mod a env in
+      materialize env t
     | _ -> assert false
   ;;
 
@@ -372,7 +377,7 @@ module Elab = struct
       let env, a = Env.add_tvar a env in
       let t1 = Type.typ env t in
       let env, x = Env.add_var x env in
-      let e = modu env e in
+      let e = expr env e in
       let e = Sugar.Expr.eff_lam x t1 eff e in
       Flat.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
     | S.Expr.EApp (e1, tc, eff, e2) ->
@@ -405,8 +410,12 @@ module Elab = struct
         Sugar.Expr.pack a (Type.cons env' tc) (Type.typ env t) e
       in
       Sugar.Expr.unpack a x e1 e2
+    | S.Expr.EMod (a, e) ->
+      let env, a = Env.enter_mod a env in
+      expr env e
+    | S.Expr.EUse e -> expr env e
 
-  and modu env (S.Expr.EMod (a, e)) =
+  and modu env (S.Expr.EMod (a, e) : S.Expr.modu) =
     let env, _ = Env.enter_mod a env in
     expr env e
 
