@@ -40,7 +40,7 @@ module Flat = struct
     | FRecord xs -> List.fold_right (fun (_, xs) acc -> fold_right f xs acc) xs acc
   ;;
 
-  let cardinal = fold_left (fun acc _ -> acc + 1) 0
+  let to_list xs = fold_right List.cons xs []
 
   let rec fold_left2 f acc xs ys =
     match xs, ys with
@@ -135,7 +135,7 @@ module Sugar = struct
           (Ex a : Ex.tvar) :: b, T.Expr.EPack (t, e, a, s)
         | _ -> assert false
       in
-      let _, e = Flat.fold_right2 aux a tc (Fun.const ([], e)) s in
+      let _, e = List.fold_right2 aux a tc (Fun.const ([], e)) s in
       e
     ;;
 
@@ -144,15 +144,15 @@ module Sugar = struct
         let tmp = T.Var.fresh () in
         tmp, T.Expr.EUnpack (a, x, T.Expr.EVar tmp, e2)
       in
-      match Flat.fold_right aux a (x, e2) with
-      | _, T.Expr.EUnpack (a', x, _, e2) when Flat.cardinal a > 0 ->
+      match List.fold_right aux a (x, e2) with
+      | _, T.Expr.EUnpack (a', x, _, e2) when a <> [] ->
         (* Minor optimization - drop top-level let in *)
         T.Expr.EUnpack (a', x, e1, e2)
       | x, e2 -> T.Expr.ELetIn (x, e1, e2)
     ;;
 
     let repack a x e1 e2 t =
-      let tc = Flat.map (fun (Ex a : Ex.tvar) : Ex.typ -> Ex (T.Type.TVar a)) a in
+      let tc = List.map (fun (Ex a : Ex.tvar) : Ex.typ -> Ex (T.Type.TVar a)) a in
       unpack a x e1 (pack a tc t e2)
     ;;
 
@@ -175,12 +175,12 @@ module Env : sig
   val empty : t
   val add_var : S.Var.t -> t -> t * T.Var.t
   val find_var : S.Var.t -> t -> T.Var.t
-  val enter_mod : S.TVar.t -> t -> t * Ex.tvar Flat.t
+  val enter_mod : S.TVar.t -> t -> t * Ex.tvar list
   val enter_field : S.Var.t -> t -> t
   val enter_arrow : S.Type.modu -> t -> t
-  val add_tvar : S.TVar.t -> t -> t * Ex.tvar Flat.t
+  val add_tvar : S.TVar.t -> t -> t * Ex.tvar list
   val find_tvar : S.TVar.t -> t -> Ex.tvar Flat.t
-  val module_tvars : t -> Ex.tvar Flat.t
+  val module_tvars : t -> Ex.tvar list
 end = struct
   type t =
     { module_tvars : Ex.tvar Flat.t option
@@ -209,12 +209,12 @@ end = struct
       debug (fun m ->
         let pp_tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
         m ~header:"tvar" "%a -> %a" S.TVar.pp a (Flat.pp pp_tvar) a');
-    { env with tvars = S.TVar.Map.add a a' env.tvars }, a'
+    { env with tvars = S.TVar.Map.add a a' env.tvars }, Flat.to_list a'
   ;;
 
   let enter_mod a env =
     let env, a' = add_tvar a env in
-    { env with module_tvars = Some a' }, a'
+    { env with module_tvars = S.TVar.Map.find_opt a env.tvars }, a'
   ;;
 
   let enter_field x env =
@@ -234,8 +234,8 @@ end = struct
 
   let module_tvars env =
     match env.module_tvars with
-    | Some a -> a
-    | None -> Flat.FRecord []
+    | Some a -> Flat.to_list a
+    | None -> []
   ;;
 end
 
@@ -261,18 +261,18 @@ module Type = struct
     | S.Type.TArrow (TMod (a1, t1), eff, t2) ->
       let env, a1 = Env.enter_mod a1 env in
       let t = Sugar.Type.eff_arrow (typ env t1) eff (typ env t2) in
-      Ex (Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) a1 t)
+      Ex (List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) a1 t)
     | S.Type.TRecord xs ->
       Ex (T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs))
     | S.Type.TSingleton t -> Ex (Sugar.Type.singleton (modu env t))
     | S.Type.TWrapped t -> Ex (Sugar.Type.wrap (modu env t))
     | S.Type.TMod (a, t) ->
       let env, a = Env.enter_mod a env in
-      Ex (Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t))
+      Ex (List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t))
 
   and modu env (TMod (a, t)) =
     let env, a = Env.enter_mod a env in
-    Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t)
+    List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t)
 
   and path env p =
     trace
@@ -285,7 +285,7 @@ module Type = struct
       | Flat.FRecord xs, S.Path.Rev.RPProj (r, x) -> aux acc (List.assoc x xs) r
       | a, S.Path.Rev.RPApp (r1, c2) ->
         let t2 = cons env c2 in
-        aux (fun t1 -> Flat.fold_left Sugar.Type.app (acc t1) t2) a r1
+        aux (fun t1 -> List.fold_left Sugar.Type.app (acc t1) t2) a r1
       | _ -> assert false
     in
     let a, r = S.Path.rev p in
@@ -298,15 +298,15 @@ module Type = struct
       | S.Type.CLam (a1, c2) ->
         let lam (Ex a1 : Ex.tvar) (Ex c2 : Ex.typ) : Ex.typ = Ex (TLam (a1, c2)) in
         let env, a1 = Env.add_tvar a1 env in
-        aux env (fun c2 -> acc (Flat.fold_right lam a1 c2)) c2
+        aux env (fun c2 -> acc (List.fold_right lam a1 c2)) c2
       | S.Type.CRecord xs ->
         (match List.Assoc.filter_map (fun k -> aux env acc k) xs with
          | [] -> None
          | xs -> Some (Flat.FRecord xs))
     in
     match aux env Fun.id c with
-    | Some c -> c
-    | None -> Flat.FRecord []
+    | Some c -> Flat.to_list c
+    | None -> []
   ;;
 end
 
@@ -323,14 +323,14 @@ module Elab = struct
       (* TODO: What to do with a2? *)
       let e = materialize env t2 in
       let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env t1) eff e in
-      Flat.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a1 e
+      List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a1 e
     | S.Type.TRecord ts ->
       let f (x, t) = S.Var.name x, materialize env t in
       T.Expr.ERecord (List.map f ts)
     | S.Type.TSingleton (TMod (a, t)) ->
       let env, a = Env.enter_mod a env in
       let t = Type.typ env t in
-      let t = Flat.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a t in
+      let t = List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a t in
       Sugar.Expr.singleton t
     | S.Type.TWrapped (TMod (a, t)) ->
       (* TODO: What to do with a? *)
@@ -347,77 +347,95 @@ module Elab = struct
       (fun m ->
          let tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
          let m = m ~header:"expr" "%a @@ %a" in
-         m S.Expr.pp e (Flat.pp tvar) (Env.module_tvars env))
-      (fun e m -> m ~header:"expr" "~> %a" T.Expr.pp e)
+         m S.Expr.pp e (Format.pp_print_list tvar) (Env.module_tvars env))
+      (fun (_, e) m -> m ~header:"expr" "~> %a" T.Expr.pp e)
     @@ fun () ->
     match e with
-    | S.Expr.EVar x -> T.Expr.EVar (Env.find_var x env)
-    | S.Expr.EConst c -> T.Expr.EConst c
+    | S.Expr.EVar x -> [], T.Expr.EVar (Env.find_var x env)
+    | S.Expr.EConst c -> [], T.Expr.EConst c
     | S.Expr.ECond (x, e1, e2, _) ->
-      let e1 = expr env e1
-      and e2 = expr env e2 in
-      T.Expr.ECond (T.Expr.EVar (Env.find_var x env), e1, e2)
+      let aks1, e1 = expr env e1
+      and aks2, e2 = expr env e2 in
+      let _ =
+        let eq (Ex a1 : Ex.tvar) (Ex a2 : Ex.tvar) =
+          T.Kind.hequal (T.TVar.kind a1) (T.TVar.kind a2) <> None
+        in
+        assert (List.equal eq aks1 aks2)
+      in
+      aks1, T.Expr.ECond (T.Expr.EVar (Env.find_var x env), e1, e2)
     | S.Expr.EStruct (xs, ts) ->
       let env, xs = List.fold_left_map bind env xs in
-      let xs = List.concat xs in
       let aux (x, _) = S.Var.name x, T.Expr.EVar (Env.find_var x env) in
       let e = T.Expr.ERecord (List.map aux ts) in
-      let a = Env.module_tvars env in
-      let tc = Flat.map (fun (Ex a : Ex.tvar) : Ex.typ -> Ex (T.Type.TVar a)) a in
+      let aks = List.concat_map fst xs in
+      let tc = List.map (fun (Ex a : Ex.tvar) : Ex.typ -> Ex (T.Type.TVar a)) aks in
       let t = Type.typ env (S.Type.TRecord ts |> S.Type.wrap) in
-      let e = Sugar.Expr.pack a tc t e in
-      List.fold_right (fun (x, a, e1) e2 -> Sugar.Expr.unpack a x e1 e2) xs e
+      let e = Sugar.Expr.pack aks tc t e in
+      aks, List.fold_right (fun (_, f) e -> f e) xs e
     | S.Expr.EProj (e, x, t) ->
-      let tmp, e1 = T.Var.fresh (), expr env e in
+      let tmp = T.Var.fresh ()
+      and aks, e1 = expr env e in
       let e2 = T.Expr.EProj (EVar tmp, S.Var.name x) in
-      let a = Env.module_tvars env in
-      let e = Sugar.Expr.repack a tmp e1 e2 (Type.typ env t) in
-      e
+      let e = Sugar.Expr.repack aks tmp e1 e2 (Type.typ env t) in
+      aks, e
     | S.Expr.EFun (x, TMod (a, t), eff, e) ->
       let env, a = Env.add_tvar a env in
       let t1 = Type.typ env t in
       let env, x = Env.add_var x env in
-      let e = expr env e in
+      let aks, e = expr env e in
+      assert (aks = []);
       let e = Sugar.Expr.eff_lam x t1 eff e in
-      Flat.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
+      [], List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
     | S.Expr.EApp (e1, tc, eff, e2) ->
-      let e = Flat.fold_left Sugar.Expr.ty_app (expr env e1) (Type.cons env tc) in
-      let env, _ = Env.enter_mod S.TVar.empty env in
-      let e = Sugar.Expr.eff_app e eff (expr env e2) in
-      e
-    | S.Expr.EType t -> Sugar.Expr.singleton (Type.modu env t)
-    | S.Expr.EExtern (s, t) -> T.Expr.EExtern (s, Type.typ env t)
-    | S.Expr.EWrap (x, _) -> Sugar.Expr.wrap (modu env x)
-    | S.Expr.EUnwrap e -> Sugar.Expr.unwrap (expr env e)
+      let e =
+        let e = List.fold_left Sugar.Expr.ty_app (snd (expr env e1)) (Type.cons env tc) in
+        let env, _ = Env.enter_mod S.TVar.empty env in
+        let e = Sugar.Expr.eff_app e eff (snd (expr env e2)) in
+        e
+      in
+      Env.module_tvars env, e
+    | S.Expr.EType t -> Env.module_tvars env, Sugar.Expr.singleton (Type.modu env t)
+    | S.Expr.EExtern (s, t) -> [], T.Expr.EExtern (s, Type.typ env t)
+    | S.Expr.EWrap (x, _) -> [], Sugar.Expr.wrap (modu env x)
+    | S.Expr.EUnwrap e -> Env.module_tvars env, Sugar.Expr.unwrap (snd (expr env e))
     | S.Expr.EInst (e, tc, t) ->
       let tc = Type.cons env tc in
-      let e = expr env e in
-      let e = Flat.fold_left (fun e (Ex t : Ex.typ) -> T.Expr.ETyApp (e, t)) e tc in
+      let aks, e = expr env e in
+      assert (aks = []);
+      let e = List.fold_left (fun e (Ex t : Ex.typ) -> T.Expr.ETyApp (e, t)) e tc in
       let e = Sugar.Expr.eff_app e Implicit (materialize env t) in
-      e
+      [], e
     | S.Expr.EGen (TMod (a, t), e) ->
       let env, a = Env.add_tvar a env in
-      let e = expr env e in
+      let aks, e = expr env e in
+      assert (aks = []);
       let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env t) Implicit e in
-      Flat.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
+      [], List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
     | S.Expr.ESeal (EMod (a, e), tc, t) ->
       let x = T.Var.fresh () in
       let env', a = Env.enter_mod a env in
-      let e1 = expr env' e in
+      let _, e1 = expr env' e in
       let e2 =
         let e = T.Expr.EVar x in
         let a = Env.module_tvars env in
         Sugar.Expr.pack a (Type.cons env' tc) (Type.typ env t) e
       in
-      Sugar.Expr.unpack a x e1 e2
+      Env.module_tvars env, Sugar.Expr.unpack a x e1 e2
     | S.Expr.EMod (a, e) ->
       let env, a = Env.enter_mod a env in
-      expr env e
-    | S.Expr.EUse e -> expr env e
+      [], snd (expr env e)
+    | S.Expr.EUse e -> Env.module_tvars env, snd (expr env e)
 
   and modu env (S.Expr.EMod (a, e) : S.Expr.modu) =
-    let env, _ = Env.enter_mod a env in
-    expr env e
+    let env, aks = Env.enter_mod a env in
+    let aks', e = expr env e in
+    let _ =
+      let eq (Ex a : Ex.tvar) (Ex a' : Ex.tvar) =
+        T.Kind.hequal (T.TVar.kind a) (T.TVar.kind a') <> None
+      in
+      assert (List.equal eq aks aks')
+    in
+    e
 
   and bind env b =
     trace
@@ -426,19 +444,21 @@ module Elab = struct
     @@ fun () ->
     let proj tmp env (x, _) =
       let env, x' = Env.add_var x env in
-      env, (x', Flat.FRecord [], T.Expr.EProj (T.Expr.EVar tmp, S.Var.name x))
-    and proj_a env x = x, Env.module_tvars (Env.enter_field x env) in
+      env, fun e -> T.Expr.ELetIn (x', EProj (EVar tmp, S.Var.name x), e)
+    in
     match b with
-    | S.Expr.BIncl (_, e, ts, ks) ->
-      let tmp, e = T.Var.fresh (), expr env e in
-      let a = Flat.FRecord (List.map (proj_a env) ks) in
-      let env, es = List.fold_left_map (proj tmp) env ts in
-      env, (tmp, a, e) :: es
+    | S.Expr.BIncl (_, e, ts) ->
+      let tmp = T.Var.fresh () in
+      let aks, e = expr env e in
+      let env, fs = List.fold_left_map (proj tmp) env ts in
+      let f = List.fold_right (fun f e -> f e) fs in
+      let f = Fun.compose (Sugar.Expr.unpack aks tmp e) f in
+      env, (aks, f)
     | S.Expr.BVal (x, e) ->
       let env' = Env.enter_field x env in
-      let e = expr env' e in
+      let aks, e = expr env' e in
       let env, x = Env.add_var x env in
-      env, [ x, Env.module_tvars env', e ]
+      env, (aks, Sugar.Expr.unpack aks x e)
   ;;
 
   let file env node =

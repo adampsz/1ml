@@ -655,7 +655,7 @@ module Expr = struct
 
   and bind =
     | BVal of Var.t * expr
-    | BIncl of Surface.vis * expr * (Var.t * Type.t) list * Var.t list
+    | BIncl of Surface.vis * expr * (Var.t * Type.t) list
   [@@deriving show]
 
   type t = expr
