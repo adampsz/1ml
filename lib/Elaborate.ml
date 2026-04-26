@@ -265,7 +265,7 @@ module Type = struct
     | S.Type.TRecord xs ->
       Ex (T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs))
     | S.Type.TSingleton t -> Ex (Sugar.Type.singleton (modu env t))
-    | S.Type.TWrapped t -> Ex (Sugar.Type.wrap (modu env t))
+    | S.Type.TWrapped t -> Ex (Sugar.Type.wrap (typ env t))
     | S.Type.TMod (a, t) ->
       let env, a = Env.enter_mod a env in
       Ex (List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t))
@@ -332,11 +332,9 @@ module Elab = struct
       let t = Type.typ env t in
       let t = List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a t in
       Sugar.Expr.singleton t
-    | S.Type.TWrapped (TMod (a, t)) ->
-      (* TODO: What to do with a? *)
-      let env, a = Env.enter_mod a env in
-      Sugar.Expr.wrap (materialize env t)
+    | S.Type.TWrapped t -> Sugar.Expr.wrap (materialize env t)
     | S.Type.TMod (a, t) ->
+      (* TODO: What to do with a? *)
       let env, a = Env.enter_mod a env in
       materialize env t
     | _ -> assert false
@@ -393,11 +391,11 @@ module Elab = struct
         let e = Sugar.Expr.eff_app e eff (snd (expr env e2)) in
         e
       in
-      Env.module_tvars env, e
-    | S.Expr.EType t -> Env.module_tvars env, Sugar.Expr.singleton (Type.modu env t)
+      [], e
+    | S.Expr.EType t -> [], Sugar.Expr.singleton (Type.modu env t)
     | S.Expr.EExtern (s, t) -> [], T.Expr.EExtern (s, Type.typ env t)
-    | S.Expr.EWrap (x, _) -> [], Sugar.Expr.wrap (modu env x)
-    | S.Expr.EUnwrap e -> Env.module_tvars env, Sugar.Expr.unwrap (snd (expr env e))
+    | S.Expr.EWrap (x, _) -> [], Sugar.Expr.wrap (expr env x |> snd)
+    | S.Expr.EUnwrap e -> [], Sugar.Expr.unwrap (snd (expr env e))
     | S.Expr.EInst (e, tc, t) ->
       let tc = Type.cons env tc in
       let aks, e = expr env e in

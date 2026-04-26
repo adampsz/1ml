@@ -33,7 +33,7 @@ module Implicit = struct
       | T.Type.TArrow (t1, _, t2) -> typ (modu acc t1) t2
       | T.Type.TRecord ts -> List.fold_left (fun xs (_, t) -> typ xs t) acc ts
       | T.Type.TSingleton t -> modu acc t
-      | T.Type.TWrapped t -> modu acc t
+      | T.Type.TWrapped t -> typ acc t
       | T.Type.TMod (_, t) -> typ acc t
     and modu acc (T.Type.TMod (_, t)) = typ acc t
     and path acc = function
@@ -235,8 +235,8 @@ module Subtype = struct
       let _ = modu env t' t, modu env t t' in
       zip, Fun.const (T.Expr.EType t)
     | TWrapped t', TWrapped t ->
-      let t = T.Subst.modu (Env.subst env zip) t in
-      let _ = modu env t' t, modu env t t' in
+      let t = T.Subst.typ (Env.subst env zip) t in
+      let _ = typ (env, zip) t' t, typ (env, zip) t t' in
       zip, Fun.id
     | TSingleton _, _ -> raise (SubtypeError ("singleton", t', t))
     | TWrapped _, _ -> raise (SubtypeError ("wrap", t', t))
@@ -438,8 +438,8 @@ module Check = struct
       let t = modu_typ env t in
       T.Kind.KEmpty, T.Type.TSingleton t |> wrap
     | S.TWrapped t ->
-      let t = modu_typ env t in
-      T.Kind.KEmpty, T.Type.TWrapped t |> wrap
+      let (T.Type.TMod (a, t)) = modu_typ env t in
+      T.Kind.KEmpty, T.Type.TWrapped (TMod (a, t) |> wrap) |> wrap
 
   and decl env d =
     trace
@@ -564,7 +564,7 @@ module Check = struct
         | Impure -> path_prepend env (T.Subst.typ (T.Subst.one a1 tc) t2)
         | Pure -> T.Kind.KEmpty, T.Subst.typ (T.Subst.one a1 tc) t2, Fun.id
       in
-      let e = T.Expr.EApp (inst (EVar x), tc, Explicit eff, f (EVar x')) in
+      let e = e (T.Expr.EApp (inst (EVar x), tc, Explicit eff, f (EVar x'))) in
       k2, eff, t2, e
     | S.EType t ->
       let t = modu_typ env t in
@@ -586,8 +586,8 @@ module Check = struct
           failwith s
       in
       let x, t' = Env.find (S.Node.data x) env in
-      let f = Subtype.modu (Env.subtype env |> fst) (TMod (T.TVar.empty, t')) t in
-      let e = T.Expr.EWrap (f (EMod (T.TVar.empty, EVar x)), t) in
+      let _, f = Subtype.typ (Env.subtype env) t' t in
+      let e = T.Expr.EWrap (f (EVar x), t) in
       T.Kind.KEmpty, T.Effect.Pure, T.Type.TWrapped t |> wrap, e
     | S.EUnwrap (x, t) ->
       let dom = Env.domain env in
@@ -607,10 +607,9 @@ module Check = struct
           t2
         | _ -> failwith "todo error expected wrapped type"
       in
-      let k2, t2 = path_prepend_compat env t2 in
-      let f = Subtype.modu_typ (Env.path env) (Env.domain env) t1 t2 in
-      let (TMod (a, _)) = t1 in
-      let e = f (EMod (a, T.Expr.EUnwrap (inst (EVar x)))) in
+      let k2, t2, e2 = path_prepend env t2 in
+      let _, f = Subtype.typ (Env.subtype env) t1 t2 in
+      let e = f (e2 (T.Expr.EUnwrap (inst (EVar x)))) in
       k2, T.Kind.eff k2, t2, e
     | S.EExtern (x, t) ->
       let k, t = typ env t in

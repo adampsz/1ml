@@ -167,7 +167,7 @@ module Eval = struct
     | L.Type.TArrow (_, _, t) -> Value.VFunction (fun _ -> materialize t)
     | L.Type.TRecord ts -> Value.VRecord (List.map (fun (x, t) -> x, materialize t) ts)
     | L.Type.TSingleton _ -> VSingleton
-    | L.Type.TWrapped (TMod (_, t)) -> VWrapped (materialize t)
+    | L.Type.TWrapped t -> VWrapped (materialize t)
     | _ -> assert false
   ;;
 

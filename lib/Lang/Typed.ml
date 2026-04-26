@@ -349,7 +349,7 @@ module Type = struct
     | TArrow of modu * feff * typ
     | TRecord of (Var.t * typ) list [@printer Format.pp_print_record Var.pp pp_typ]
     | TSingleton of modu
-    | TWrapped of modu
+    | TWrapped of typ
     | TMod of TVar.t * typ
   [@@deriving show]
 
@@ -458,7 +458,7 @@ module Type = struct
         typ env t1 && typ env t2
       | TRecord ts -> List.for_all (fun (_, t) -> typ env t) ts
       | TSingleton t -> modu env t
-      | TWrapped t -> modu env t
+      | TWrapped t -> typ env t
       | TMod (a, t) -> typ (TVar.Set.add a env) t
     and modu env (TMod (a, t)) = typ (TVar.Set.add a env) t
     and path env = function
@@ -506,7 +506,7 @@ module Subst = struct
       Type.wrap t
     | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap
     | TSingleton t -> TSingleton (modu ~rename f t) |> Type.wrap
-    | TWrapped t -> TWrapped (modu ~rename f t) |> Type.wrap
+    | TWrapped t -> TWrapped (typ ~rename f t) |> Type.wrap
     | TMod (a, t) ->
       let a, rename = freshen a rename in
       TMod (a, typ ~rename f t) |> Type.wrap
@@ -642,7 +642,7 @@ module Expr = struct
     | EApp of expr * Type.cons * Type.feff * expr
     | EType of Type.modu
     | EExtern of string * Type.t
-    | EWrap of modu * Type.modu
+    | EWrap of expr * Type.typ
     | EUnwrap of expr
     | EInst of expr * Type.cons * Type.t
     | EGen of Type.modu * expr
