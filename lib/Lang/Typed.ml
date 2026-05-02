@@ -25,6 +25,7 @@ module Var : sig
   type t
 
   val fresh : string -> t
+  val clone : t -> t
   val id : t -> int
   val name : t -> string
   val equal : t -> t -> bool
@@ -42,6 +43,7 @@ end = struct
   type t = UID.t * string
 
   let fresh name = UID.next (), name
+  let clone (_, name) = fresh name
   let id (x, _) = UID.get x
   let name (_, name) = name
   let equal (x1, _) (x2, _) = UID.equal x1 x2
@@ -346,7 +348,7 @@ module Type = struct
     | TInfer of view UVar.t
     | TAbstr of cons Path.t
     | TPrim of Prim.t
-    | TArrow of modu * feff * typ
+    | TArrow of Var.t * modu * feff * typ
     | TRecord of (Var.t * typ) list [@printer Format.pp_print_record Var.pp pp_typ]
     | TSingleton of modu
     | TWrapped of typ
@@ -423,10 +425,10 @@ module Type = struct
       | TInfer _ -> true (* Because only small types can be infered *)
       | TAbstr p -> path env p
       | TPrim _ -> true
-      | TArrow (TMod (a1, t1), Explicit Impure, t2) ->
+      | TArrow (_, TMod (a1, t1), Explicit Impure, t2) ->
         let env = TVar.Set.add a1 env in
         typ env t1 && typ env t2
-      | TArrow (TMod (_, _), (Explicit Pure | Implicit), _) -> false
+      | TArrow (_, TMod (_, _), (Explicit Pure | Implicit), _) -> false
       | TRecord xs -> List.for_all (fun (_, t) -> typ env t) xs
       | TSingleton t -> modu env t
       | TWrapped _ -> true
@@ -453,7 +455,7 @@ module Type = struct
         true
       | TAbstr p -> path env p
       | TPrim _ -> true
-      | TArrow (TMod (a1, t1), _, t2) ->
+      | TArrow (_, TMod (a1, t1), _, t2) ->
         let env = TVar.Set.add a1 env in
         typ env t1 && typ env t2
       | TRecord ts -> List.for_all (fun (_, t) -> typ env t) ts
@@ -500,9 +502,9 @@ module Subst = struct
     | TInfer _ -> t
     | TAbstr p -> path ~rename f p
     | TPrim _ -> t
-    | TArrow (TMod (a1, t1), eff, t2) ->
+    | TArrow (x, TMod (a1, t1), eff, t2) ->
       let a1, rename = freshen a1 rename in
-      let t = TArrow (TMod (a1, typ ~rename f t1), eff, typ ~rename f t2) in
+      let t = TArrow (x, TMod (a1, typ ~rename f t1), eff, typ ~rename f t2) in
       Type.wrap t
     | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap
     | TSingleton t -> TSingleton (modu ~rename f t) |> Type.wrap
@@ -646,7 +648,7 @@ module Expr = struct
     | EUnwrap of expr
     | EInst of expr * Type.cons * Type.t
     | EGen of Type.modu * expr
-    | ESeal of modu * Type.cons * Type.t
+    | ESeal of TVar.t * expr * Type.cons * Type.t
     | EMod of TVar.t * expr
     | EUse of expr
   [@@deriving show]
@@ -661,4 +663,35 @@ module Expr = struct
   type t = expr
 
   let pp = pp_expr
+end
+
+module Invariant = struct
+  exception InvariantViolation of string
+
+  let invariant cond msg = if not cond then raise (InvariantViolation msg)
+
+  let rec typ ?(modules = false) path t =
+    match Type.view t with
+    | TInfer _ ->
+      (* TODO: check scope *)
+      ()
+    | TAbstr _ ->
+      (* TODO: check path *)
+      ()
+    | TPrim _ -> ()
+    | TArrow (_, TMod (a1, t1), eff, t2) ->
+      typ (Path.PVar a1) t1;
+      let modules =
+        match eff with
+        | Explicit Impure -> true
+        | Explicit Pure | Implicit -> false
+      in
+      typ ~modules (Path.PApp (path, a1)) t2
+    | TRecord xs -> List.iter (fun (x, t) -> typ (Path.PProj (path, x)) t) xs
+    | TSingleton (TMod (a, t)) -> typ (Path.PVar a) t
+    | TWrapped t -> typ path t
+    | TMod (a, t) ->
+      invariant (not modules) "Modules are not allowed in this position";
+      typ (Path.PVar a) t
+  ;;
 end

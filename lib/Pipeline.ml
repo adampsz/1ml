@@ -28,11 +28,11 @@ let get t =
   make (List.map aux (List.rev t))
 ;;
 
-let typecheck x = Typecheck.Check.file Typecheck.Check.Env.empty x
+let typecheck x = Typecheck.Check.file Typecheck.Env.empty x
 
 let eval x =
   let extern = Eval.Extern.rossberg in
-  let _ = Eval.Eval.modu (Eval.Env.init extern) x in
+  let _ = Eval.Eval.eval (Eval.Env.init extern) x in
   ()
 ;;
 

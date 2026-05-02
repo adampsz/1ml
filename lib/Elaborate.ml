@@ -258,7 +258,7 @@ module Type = struct
       Format.kasprintf failwith "unresolved type inference variable: %a" S.Type.pp t
     | S.Type.TPrim p -> Ex (T.Type.TPrim p)
     | S.Type.TAbstr p -> path env p
-    | S.Type.TArrow (TMod (a1, t1), eff, t2) ->
+    | S.Type.TArrow (_, TMod (a1, t1), eff, t2) ->
       let env, a1 = Env.enter_mod a1 env in
       let t = Sugar.Type.eff_arrow (typ env t1) eff (typ env t2) in
       Ex (List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) a1 t)
@@ -318,7 +318,7 @@ module Elab = struct
     @@ fun () ->
     match S.Type.view t with
     | S.Type.TPrim PUnit -> T.Expr.EConst (CUnit ())
-    | S.Type.TArrow (TMod (a1, t1), eff, t2) ->
+    | S.Type.TArrow (_, TMod (a1, t1), eff, t2) ->
       let env, a1 = Env.enter_mod a1 env in
       (* TODO: What to do with a2? *)
       let e = materialize env t2 in
@@ -409,16 +409,16 @@ module Elab = struct
       assert (aks = []);
       let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env t) Implicit e in
       [], List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
-    | S.Expr.ESeal (EMod (a, e), tc, t) ->
+    | S.Expr.ESeal (a, e, tc, t) ->
       let x = T.Var.fresh () in
-      let env', a = Env.enter_mod a env in
+      let env', aks' = Env.enter_mod a env in
       let _, e1 = expr env' e in
       let e2 =
         let e = T.Expr.EVar x in
         let a = Env.module_tvars env in
         Sugar.Expr.pack a (Type.cons env' tc) (Type.typ env t) e
       in
-      Env.module_tvars env, Sugar.Expr.unpack a x e1 e2
+      Env.module_tvars env, Sugar.Expr.unpack aks' x e1 e2
     | S.Expr.EMod (a, e) ->
       let env, a = Env.enter_mod a env in
       [], snd (expr env e)
@@ -462,13 +462,13 @@ module Elab = struct
   let file env node =
     trace
       (fun m ->
-         let expr = Format.with_margin 140 S.Expr.pp_modu in
+         let expr = Format.with_margin 140 S.Expr.pp_expr in
          let expr = Format.with_max_boxes Int.max_int expr in
          m ~header:"file" "%a" expr node)
       (fun t m ->
          let expr = Format.with_margin 140 T.Expr.pp in
          let expr = Format.with_max_boxes Int.max_int expr in
          m ~header:"file" "%a" expr t)
-    @@ fun () -> modu env node
+    @@ fun () -> expr env node |> snd
   ;;
 end
