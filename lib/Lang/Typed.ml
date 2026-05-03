@@ -385,6 +385,19 @@ module Type = struct
       | CRecord xs -> Kind.KRecord (List.Assoc.map kind xs)
     ;;
 
+    let rec is_tvar a c =
+      let rec aux = function
+        | CEmpty -> true
+        | CType t ->
+          (match view t with
+           | TAbstr p -> TVar.equal a (Path.var p)
+           | _ -> false)
+        | CLam (_, c) -> aux c
+        | CRecord xs -> List.for_all (fun (_, c) -> aux c) xs
+      in
+      Kind.equal (kind c) (TVar.kind a) && aux c
+    ;;
+
     let equal = ( = )
     let pp = pp_cons
   end
@@ -415,7 +428,7 @@ module Type = struct
 
   let is_path path t =
     match view t with
-    | TAbstr p -> Path.equal (fun _ _ -> true) path p
+    | TAbstr p -> Path.equal Cons.is_tvar path p
     | _ -> false
   ;;
 
@@ -555,6 +568,46 @@ module Subst = struct
     | Some (CType t) -> t
     | None -> TAbstr p |> Type.wrap
     | _ -> assert false
+  ;;
+end
+
+module Equal = struct
+  let rename (f : ?rename:_ -> _) a' a = f ~rename:(TVar.Map.singleton a' a) Subst.id
+
+  let rec typ t' t =
+    match Type.view t', Type.view t with
+    | TInfer z, t | t, TInfer z -> Type.resolve z (Type.wrap t)
+    | TAbstr p', TAbstr p -> Path.equal cons p' p
+    | TAbstr _, _ -> false
+    | TPrim p', TPrim p -> p' = p
+    | TPrim _, _ -> false
+    | TArrow (_, TMod (a', t1'), eff', t2'), TArrow (_, TMod (a, t1), eff, t2) ->
+      eff' = eff
+      && typ (rename Subst.typ a' a t1') t1
+      && typ (rename Subst.typ a' a t2') t2
+    | TArrow _, _ -> false
+    | TRecord ts', TRecord ts ->
+      List.equal (fun (x', t') (x, t) -> Var.equal x' x && typ t' t) ts' ts
+    | TRecord _, _ -> false
+    | TSingleton (TMod (a', t')), TSingleton (TMod (a, t)) ->
+      typ (TMod (a', t') |> Type.wrap) (TMod (a, t) |> Type.wrap)
+    | TSingleton _, _ -> false
+    | TWrapped t', TWrapped t -> typ t' t
+    | TWrapped _, _ -> false
+    | TMod (a', t'), TMod (a, t) -> typ (rename Subst.typ a' a t') t
+    | TMod _, _ -> false
+
+  and cons c' c =
+    match c', c with
+    | CEmpty, CEmpty -> true
+    | CEmpty, _ -> false
+    | CType t', CType t -> typ t t'
+    | CType _, _ -> false
+    | CLam (a', c'), CLam (a, c) -> cons (rename Subst.cons a' a c') c
+    | CLam _, _ -> false
+    | CRecord ts', CRecord ts ->
+      List.equal (fun (x', c') (x, c) -> Var.equal x' x && cons c' c) ts' ts
+    | CRecord _, _ -> false
   ;;
 end
 

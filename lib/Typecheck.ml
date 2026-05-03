@@ -21,6 +21,7 @@ module Env : sig
   val path : t -> T.TVar.t T.Path.t
   val domain : t -> T.TVar.Set.t
   val for_subtype : t -> t * T.Zipper.t
+  val for_pp : t -> Pretty.Env.t
 end = struct
   type t =
     { path : T.TVar.t T.Path.t
@@ -49,6 +50,7 @@ end = struct
   let domain env = env.tvars
   let path env = env.path
   let for_subtype env = env, T.Zipper.of_path env.path
+  let for_pp env = String.Map.to_rev_seq env.vars |> Seq.map snd |> List.of_seq
 end
 
 module Implicit = struct
@@ -129,7 +131,7 @@ module Subtype = struct
     let subst (env, zip) = T.Zipper.subst (T.Path.var (Env.path env)) zip
   end
 
-  exception SubtypeError of string * T.Type.t * T.Type.t
+  exception SubtypeError of string * Env.t * T.Type.t * T.Type.t
 
   let uvar env = TInfer (T.UVar.fresh (Env.domain env)) |> wrap
 
@@ -186,7 +188,7 @@ module Subtype = struct
     | TInfer z, t | t, TInfer z ->
       if T.Type.resolve z (wrap t)
       then zip, Fun.id
-      else raise (SubtypeError ("infer", wrap (TInfer z), wrap t))
+      else raise (SubtypeError ("infer", env, wrap (TInfer z), wrap t))
     (* Subtyping *)
     (* TODO: simplify *)
     | TMod (a', t'), TMod (a, t) ->
@@ -211,18 +213,19 @@ module Subtype = struct
       let t = T.Subst.typ (Env.subst (env, zip)) t in
       (match T.Type.view t with
        | TAbstr p' when T.Path.equal (equal env zip) p' p ->
-         raise (SubtypeError ("abstr", t', t))
+         raise (SubtypeError ("abstr", env, t', t))
        | _ -> typ (env, zip) t' t)
-    | TAbstr _, _ -> raise (SubtypeError ("abstr", t', t))
+    | TAbstr _, _ -> raise (SubtypeError ("abstr", env, t', t))
     | TPrim p', TPrim p when T.Prim.equal p' p -> zip, Fun.id
-    | TPrim _, _ -> raise (SubtypeError ("prim", t', t))
+    | TPrim _, _ -> raise (SubtypeError ("prim", env, t', t))
     | TRecord xs', TRecord xs ->
       let aux zip (x, t) =
         let x', t' =
           match T.Var.assoc_opt (T.Var.name x) xs' with
           | Some (x', t') -> x', t'
           | None ->
-            raise (SubtypeError (Printf.sprintf "record field %s" (T.Var.name x), t', t))
+            raise
+              (SubtypeError (Printf.sprintf "record field %s" (T.Var.name x), env, t', t))
         in
         let zip, c = typ (Env.enter_field x (env, zip)) t' t in
         T.Zipper.up zip, T.Expr.BVal (x, c (EVar x'))
@@ -230,7 +233,7 @@ module Subtype = struct
       let zip, bs = List.fold_left_map aux zip xs in
       let xs = List.map (fun (x, t) -> x, T.Subst.typ (Env.subst (env, zip)) t) xs in
       zip, fun e -> T.Expr.EStruct (BIncl (Private, e, xs') :: bs, xs)
-    | TRecord _, _ -> raise (SubtypeError ("record", t', t))
+    | TRecord _, _ -> raise (SubtypeError ("record", env, t', t))
     (*
        Γ,a₁ ⊢ t₁ ≤ ∃α₁′. t₁′ ↑ tₐ     Γ,a₁ ⊢ (∃a₂′. t₂′)[tₐ/a₁′] ≤ (∃a₂. t₂)
       ----------------------------------------------------------------------
@@ -259,7 +262,7 @@ module Subtype = struct
         T.Expr.EFun (x1, TMod (a1, t1), Explicit eff, f2 e)
       in
       zip, f
-    | TArrow _, _ -> raise (SubtypeError ("arrow", t', t))
+    | TArrow _, _ -> raise (SubtypeError ("arrow", env, t', t))
     | TSingleton (TMod (a', t')), TSingleton (TMod (a, t))
       when T.TVar.is_empty a'
            && T.TVar.is_empty a
@@ -273,8 +276,8 @@ module Subtype = struct
       let t = T.Subst.typ (Env.subst (env, zip)) t in
       let _ = typ (env, zip) t' t, typ (env, zip) t t' in
       zip, Fun.id
-    | TSingleton _, _ -> raise (SubtypeError ("singleton", t', t))
-    | TWrapped _, _ -> raise (SubtypeError ("wrap", t', t))
+    | TSingleton _, _ -> raise (SubtypeError ("singleton", env, t', t))
+    | TWrapped _, _ -> raise (SubtypeError ("wrap", env, t', t))
 
   (**
     Subtyping rule [Γ ⊢ t′ ≤ ∃a. t]
@@ -298,8 +301,9 @@ module Subtype = struct
   let _ =
     let fmt = Format.asprintf "mismatch in %s between %a and %a" in
     let f = function
-      | SubtypeError (msg, t1, t2) ->
-        Some (fmt msg (Pretty.typ Pretty.Env.empty) t1 (Pretty.typ Pretty.Env.empty) t2)
+      | SubtypeError (msg, env, t1, t2) ->
+        let typ = Pretty.Print.typ (Env.for_pp env) in
+        Some (fmt msg typ t1 typ t2)
       | _ -> None
     in
     Printexc.register_printer f
@@ -472,7 +476,7 @@ module Check = struct
       (match view c with
        | T.Type.TPrim PBool -> ()
        | T.Type.TInfer z -> assert (T.Type.resolve z (wrap (T.Type.TPrim PBool)))
-       | _ -> failwith "todo");
+       | _ -> failwith "todo error");
       let eff1, T.Type.TMod (a1, t1), e1 = modu_expr env e1
       and eff2, T.Type.TMod (a2, t2), e2 = modu_expr env e2
       and k, t = typ env t in
