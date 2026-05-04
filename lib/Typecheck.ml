@@ -50,7 +50,12 @@ end = struct
   let domain env = env.tvars
   let path env = env.path
   let for_subtype env = env, T.Zipper.of_path env.path
-  let for_pp env = String.Map.to_rev_seq env.vars |> Seq.map snd |> List.of_seq
+
+  let for_pp env =
+    Pretty.Env.empty
+    |> T.TVar.Set.fold Pretty.Env.add_tvar env.tvars
+    |> String.Map.fold (fun _ (x, t) -> Pretty.Env.add_var x t) env.vars
+  ;;
 end
 
 module Implicit = struct
@@ -302,7 +307,7 @@ module Subtype = struct
     let fmt = Format.asprintf "mismatch in %s between %a and %a" in
     let f = function
       | SubtypeError (msg, env, t1, t2) ->
-        let typ = Pretty.Print.typ (Env.for_pp env) in
+        let typ = Pretty.Print.typ ~prec:0 ~env:(Env.for_pp env) in
         Some (fmt msg typ t1 typ t2)
       | _ -> None
     in

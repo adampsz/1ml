@@ -494,8 +494,8 @@ module Type = struct
     | TInfer z ->
       UVar.resolve (fun z -> TInfer z) z' z;
       true
-    | t when is_small (wrap t) && extrude z' (wrap t) ->
-      UVar.set z' t;
+    | _ when is_small t && extrude z' t ->
+      UVar.set z' (view t);
       true
     | _ -> false
   ;;

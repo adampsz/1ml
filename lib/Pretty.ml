@@ -2,13 +2,37 @@ open Util
 module T = Lang.Typed
 
 module Env = struct
-  type t = (T.Var.t * T.Type.t) list
+  type t =
+    { tvars : T.TVar.Set.t
+    ; vars : (T.Var.t * T.Type.t) list
+    }
 
-  let empty = []
-  let add a t env = (a, t) :: env
+  let empty = { tvars = T.TVar.Set.empty; vars = [] }
+  let add_var a t env = { env with vars = (a, t) :: env.vars }
+  let add_tvar a env = { env with tvars = T.TVar.Set.add a env.tvars }
+  let with_vars vars env = { env with vars }
+  let tvars env = env.tvars
+
+  let find f env =
+    let rec aux used = function
+      | [] -> None
+      | (x, _) :: xs when String.starts_with ~prefix:"#" (T.Var.name x) -> aux used xs
+      | (x, t) :: xs ->
+        (match f ~shadowed:(String.Set.mem (T.Var.name x) used) x t with
+         | Some res -> Some res
+         | None -> aux (String.Set.add (T.Var.name x) used) xs)
+    in
+    aux String.Set.empty env.vars
+  ;;
 end
 
 module Abstr = struct
+  type 'a display =
+    | DNil
+    | DProj of 'a display * T.Var.t * bool
+    | DApp of 'a display * 'a
+  [@@deriving show]
+
   let rec concretize env = function
     | T.Kind.KEmpty -> T.Type.CEmpty
     | T.Kind.KType -> T.Type.CType (TInfer (T.UVar.fresh env) |> T.Type.wrap)
@@ -20,57 +44,81 @@ module Abstr = struct
   ;;
 
   let rec find_in_env p out env =
-    let aux = function
-      | x, _ when String.starts_with ~prefix:"#" (T.Var.name x) -> None
-      | x, t -> find_in_type p (T.Path.PProj (out, x)) t
-    in
-    List.find_map aux env
+    Env.find (fun ~shadowed x t -> find_in_type p (DProj (out, x, shadowed)) env t) env
 
-  and find_in_type p out t =
+  and find_in_type p out env t =
     match T.Type.view t with
-    | TSingleton (TMod (a, t)) when T.TVar.is_empty a -> find_in_singleton p out t
-    | TRecord ts -> find_in_env p out ts
-    | TArrow (_, t1, (Explicit Pure | Implicit), t2) ->
-      find_in_type p (T.Path.PApp (out, t1)) t2
+    | TSingleton (TMod (a, t)) when T.TVar.is_empty a -> find_in_singleton p out env t
+    | TRecord ts -> find_in_env p out (Env.with_vars ts env)
+    | TArrow (x, TMod (a1, t1), (Explicit Pure | Implicit), t2) ->
+      let env = Env.add_tvar a1 env in
+      let env = Env.add_var x t1 env in
+      find_in_type p (DApp (out, T.Type.TMod (a1, t1))) env t2
     | _ -> None
 
-  and find_in_singleton p out t =
+  and find_in_singleton p out env t =
     let rec generalize t = function
-      | T.Path.PVar a -> T.Path.PVar a, t
-      | T.Path.PProj (p, x) ->
+      | DNil -> DNil, t
+      | DProj (p, x, shadowed) ->
         let out, t = generalize t p in
-        T.Path.PProj (out, x), t
-      | T.Path.PApp (p, T.Type.TMod (a, t1)) ->
-        let c = concretize T.TVar.Set.empty (T.TVar.kind a) in
+        DProj (out, x, shadowed), t
+      | DApp (p, T.Type.TMod (a, t1)) ->
+        let c = concretize (Env.tvars env) (T.TVar.kind a) in
         let out, t = generalize (T.Subst.typ (T.Subst.one a c) t) p in
-        T.Path.PApp (out, T.Subst.typ (T.Subst.one a c) t1), t
+        DApp (out, T.Subst.typ (T.Subst.one a c) t1), t
     in
     let out, t = generalize t out in
     if T.Equal.typ t (TAbstr p |> T.Type.wrap) then Some out else None
   ;;
 end
 
+module Prec = struct
+  let abstr ~prec = function
+    | Abstr.DProj _ -> 3
+    | Abstr.DApp _ -> 2
+    | Abstr.DNil -> prec
+  ;;
+
+  let rec typ ~prec t =
+    match T.Type.view t with
+    | TAbstr p -> prec
+    | TArrow _ -> 1
+    | TMod (_, t) -> typ ~prec t
+    | _ -> Int.max_int
+  ;;
+
+  let parens fmt = "@[<hv 2>(@," ^^ fmt ^^ "@;<0 -2>)@]"
+  let wrap p p' ppf f = if p > p' then Format.fprintf ppf (parens "%a") f p' else f ppf p'
+end
+
 module Print = struct
-  let var ppf x = Format.pp_print_string ppf (T.Var.name x)
+  let var ppf x =
+    if String.starts_with ~prefix:"#" (T.Var.name x)
+    then Format.pp_print_string ppf "_"
+    else Format.pp_print_string ppf (T.Var.name x)
+  ;;
 
-  let rec abstr ~env ppf p =
-    let rec aux ppf = function
-      | T.Path.PProj (T.Path.PVar _, x) -> Format.fprintf ppf "%a" var x
-      | T.Path.PProj ((T.Path.PApp _ as p), x) ->
-        Format.fprintf ppf "@[<hv 2>(@,%a@;<0 -2>)@]@,.%a" aux p var x
-      | T.Path.PProj (p, x) -> Format.fprintf ppf "%a@,.%a" aux p var x
-      | T.Path.PApp (p, a) -> Format.fprintf ppf "%a@ %a" aux p (typ ~env) a
-      | T.Path.PVar _ -> assert false
+  let rec abstr ~prec ~env ppf p =
+    let rec aux ~prec ppf p =
+      Prec.wrap prec (Prec.abstr ~prec p) ppf
+      @@ fun ppf prec ->
+      match p with
+      | Abstr.DProj (Abstr.DNil, x, _) -> Format.fprintf ppf "%a" var x
+      | Abstr.DProj (p, x, _) -> Format.fprintf ppf "%a@,.%a" (aux ~prec) p var x
+      | Abstr.DApp (p, a) -> Format.fprintf ppf "%a@ %a" (aux ~prec) p (typ ~prec ~env) a
+      | Abstr.DNil -> assert false
     in
-    Format.fprintf ppf "@[<2>%a@]" aux p
+    Format.fprintf ppf "@[<2>%a@]" (aux ~prec) p
 
-  and typ ~env ppf t =
+  and typ ~prec ~env ppf t =
+    Prec.wrap prec (Prec.typ ~prec t) ppf
+    @@ fun ppf prec ->
     match T.Type.view t with
     | TInfer _ -> Format.pp_print_string ppf "_"
     | TAbstr p ->
-      (match Abstr.find_in_env p (T.Path.PVar T.TVar.empty) env with
-       | Some p -> abstr ~env ppf p
-       | None -> Format.pp_print_string ppf "type")
+      (match Abstr.find_in_env p Abstr.DNil env with
+       | Some p -> abstr ~prec ~env ppf p
+       | None -> Format.pp_print_string ppf "<abstr>")
     | TPrim p ->
       (match p with
        | PUnit -> Format.pp_print_string ppf "unit"
@@ -80,7 +128,6 @@ module Print = struct
        | PChar -> Format.pp_print_string ppf "char"
        | PString -> Format.pp_print_string ppf "string")
     | TArrow _ ->
-      let var ppf x = Format.pp_print_string ppf (T.Var.name x) in
       let arrow ppf = function
         | T.Type.Explicit Pure | T.Type.Implicit -> Format.pp_print_string ppf "=>"
         | T.Type.Explicit Impure -> Format.pp_print_string ppf "->"
@@ -88,27 +135,37 @@ module Print = struct
         | T.Type.Implicit -> Format.pp_print_string ppf "'"
         | T.Type.Explicit _ -> ()
       in
+      let arg ~prec ~env ppf (x, t) =
+        if String.starts_with ~prefix:"#" (T.Var.name x)
+        then typ ~prec:(prec + 1) ~env ppf t
+        else Format.fprintf ppf (Prec.parens "%a:@ %a") var x (typ ~prec:0 ~env) t
+      in
       let rec pp ~env ppf t =
         match T.Type.view t with
-        | TMod (_, t) -> pp ~env ppf t
-        | TArrow (x, TMod (_, t1), eff, t2) ->
-          let env = Env.add x t1 env in
-          let pf = Format.fprintf ppf "%a@[<hv 2>(@,%a :@;<1 2>%a@;<0 -2>)@] %a@ %a" in
-          pf tick eff var x (typ ~env) t1 arrow eff (pp ~env) t2
-        | _ -> typ ~env ppf t
+        | TMod (a, t) -> pp ~env:(Env.add_tvar a env) ppf t
+        | TArrow (x, TMod (a, t1), eff, t2) ->
+          let env = Env.add_tvar a env in
+          let pf = Format.fprintf ppf "%a%a %a@ %a" in
+          let pf = pf tick eff (arg ~prec ~env) (x, t1) in
+          pf arrow eff (pp ~env:(Env.add_var x t1 env)) t2
+        | _ -> typ ~prec ~env ppf t
       in
       Format.fprintf ppf "@[<2>%a@]" (pp ~env) t
     | TRecord [] -> Format.pp_print_string ppf "{ }"
-    | TRecord ts -> Format.pp_print_record var (typ ~env) ppf ts
+    | TRecord ts ->
+      let aux (is_first, env) (k, v) =
+        if not is_first then Format.fprintf ppf ";@ ";
+        Format.fprintf ppf "@[<2>%a:@ %a@]" var k (typ ~prec:0 ~env) v;
+        false, Env.add_var k v env
+      in
+      let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(";", -2, "") in
+      Format.fprintf ppf "{@[<hv 1>@;";
+      List.fold_left aux (true, env) ts |> ignore;
+      Format.fprintf ppf "%t@]}" br
     | TSingleton (TMod (a, t)) ->
       let pp = Format.fprintf ppf "@[<2>(=@ %a@;<0 -2>)@]" in
-      pp (typ ~env) (TMod (a, t) |> T.Type.wrap)
-    | TWrapped t -> Format.fprintf ppf "@[<2>wrap@ %a@]" (typ ~env) t
-    | TMod (_, t) -> typ ~env ppf t
-  ;;
-
-  let typ env ppf t =
-    Format.eprintf "ENV: %a@." (Format.pp_print_record T.Var.pp T.Type.pp) env;
-    typ ~env ppf t
+      pp (typ ~prec:0 ~env) (TMod (a, t) |> T.Type.wrap)
+    | TWrapped t -> Format.fprintf ppf "@[<2>wrap@ %a@]" (typ ~prec:0 ~env) t
+    | TMod (a, t) -> typ ~prec ~env:(Env.add_tvar a env) ppf t
   ;;
 end
