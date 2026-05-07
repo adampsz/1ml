@@ -409,7 +409,8 @@ module Elab = struct
       assert (aks = []);
       let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env t) Implicit e in
       [], List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
-    | S.Expr.ESeal (a, e, tc, t) ->
+    | S.Expr.ESeal (e, tc, t) ->
+      let a, e = S.Expr.as_module e in
       let x = T.Var.fresh () in
       let env', aks' = Env.enter_mod a env in
       let _, e1 = expr env' e in

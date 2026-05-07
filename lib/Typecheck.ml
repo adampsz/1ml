@@ -200,17 +200,16 @@ module Subtype = struct
       let f =
         let zip, f = typ (Env.enter_mod a (Env.add_tvar a' env)) t' t in
         fun e : T.Expr.expr ->
-          T.Expr.EMod (a, T.Expr.ESeal (a', f (T.Expr.EUse e), T.Zipper.get zip, t))
+          T.Expr.EMod (a, T.Expr.ESeal (EMod (a', f (T.Expr.EUse e)), T.Zipper.get zip, t))
       in
       zip, f
     | TMod (a', t'), _ ->
       let zip, f = typ (Env.add_tvar a' env, zip) t' t in
-      zip, fun e -> T.Expr.ESeal (a', f (T.Expr.EUse e), T.Zipper.get zip, t)
+      zip, fun e -> T.Expr.ESeal (EMod (a', f (T.Expr.EUse e)), T.Zipper.get zip, t)
     | _, TMod (a, t) ->
       let f =
         let zip, f = typ (Env.enter_mod a env) t' t in
-        fun e : T.Expr.expr ->
-          T.Expr.EMod (a, T.Expr.ESeal (T.TVar.empty, f e, T.Zipper.get zip, t))
+        fun e : T.Expr.expr -> T.Expr.EMod (a, T.Expr.ESeal (f e, T.Zipper.get zip, t))
       in
       zip, f
     | TAbstr p', TAbstr p when T.Path.equal (equal env zip) p' p -> zip, Fun.id
@@ -290,7 +289,7 @@ module Subtype = struct
   and modu env (TMod (a', t')) (TMod (a, t)) =
     let zip, f = typ (Env.enter_mod a (Env.add_tvar a' env)) t' t in
     fun (T.Expr.EMod (_, e)) ->
-      T.Expr.EMod (a, T.Expr.ESeal (a', f e, T.Zipper.get zip, t))
+      T.Expr.EMod (a, T.Expr.ESeal (EMod (a', f e), T.Zipper.get zip, t))
 
   and equal env zip t' t =
     match t', t with
@@ -570,7 +569,7 @@ module Check = struct
       let x, t' = Env.find (S.Node.data x) env
       and k, t = typ env t in
       let zip, c = Subtype.typ (Env.for_subtype env) t' t in
-      let e = T.Expr.ESeal (T.TVar.empty, c (EVar x), T.Zipper.get zip, t) in
+      let e = T.Expr.ESeal (c (EVar x), T.Zipper.get zip, t) in
       k, T.Kind.eff k, t, e
     | S.EWrap (x, t) ->
       let k, t = typ env t in

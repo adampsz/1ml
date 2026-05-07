@@ -375,6 +375,17 @@ module Type = struct
 
   let wrap t = T t
 
+  let as_module t =
+    match view t with
+    | TMod (a, t) -> a, t
+    | _ -> TVar.empty, t
+  ;;
+
+  let as_type = function
+    | a, t when TVar.is_empty a -> t
+    | a, t -> TMod (a, t) |> wrap
+  ;;
+
   module Cons = struct
     type t = cons
 
@@ -701,7 +712,7 @@ module Expr = struct
     | EUnwrap of expr
     | EInst of expr * Type.cons * Type.t
     | EGen of Type.modu * expr
-    | ESeal of TVar.t * expr * Type.cons * Type.t
+    | ESeal of expr * Type.cons * Type.t
     | EMod of TVar.t * expr
     | EUse of expr
   [@@deriving show]
@@ -716,35 +727,9 @@ module Expr = struct
   type t = expr
 
   let pp = pp_expr
-end
 
-module Invariant = struct
-  exception InvariantViolation of string
-
-  let invariant cond msg = if not cond then raise (InvariantViolation msg)
-
-  let rec typ ?(modules = false) path t =
-    match Type.view t with
-    | TInfer _ ->
-      (* TODO: check scope *)
-      ()
-    | TAbstr _ ->
-      (* TODO: check path *)
-      ()
-    | TPrim _ -> ()
-    | TArrow (_, TMod (a1, t1), eff, t2) ->
-      typ (Path.PVar a1) t1;
-      let modules =
-        match eff with
-        | Explicit Impure -> true
-        | Explicit Pure | Implicit -> false
-      in
-      typ ~modules (Path.PApp (path, a1)) t2
-    | TRecord xs -> List.iter (fun (x, t) -> typ (Path.PProj (path, x)) t) xs
-    | TSingleton (TMod (a, t)) -> typ (Path.PVar a) t
-    | TWrapped t -> typ path t
-    | TMod (a, t) ->
-      invariant (not modules) "Modules are not allowed in this position";
-      typ (Path.PVar a) t
+  let as_module = function
+    | EMod (a, e) -> a, e
+    | e -> TVar.empty, e
   ;;
 end
