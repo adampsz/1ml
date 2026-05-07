@@ -177,7 +177,7 @@ module Env : sig
   val find_var : S.Var.t -> t -> T.Var.t
   val enter_mod : S.TVar.t -> t -> t * Ex.tvar list
   val enter_field : S.Var.t -> t -> t
-  val enter_arrow : S.Type.modu -> t -> t
+  val enter_arrow : S.TVar.t * S.Type.t -> t -> t
   val add_tvar : S.TVar.t -> t -> t * Ex.tvar list
   val find_tvar : S.TVar.t -> t -> Ex.tvar Flat.t
   val module_tvars : t -> Ex.tvar list
@@ -258,21 +258,18 @@ module Type = struct
       Format.kasprintf failwith "unresolved type inference variable: %a" S.Type.pp t
     | S.Type.TPrim p -> Ex (T.Type.TPrim p)
     | S.Type.TAbstr p -> path env p
-    | S.Type.TArrow (_, TMod (a1, t1), eff, t2) ->
-      let env, a1 = Env.enter_mod a1 env in
+    | S.Type.TArrow (_, t1, eff, t2) ->
+      let a, t1 = S.Type.as_module t1 in
+      let env, a = Env.enter_mod a env in
       let t = Sugar.Type.eff_arrow (typ env t1) eff (typ env t2) in
-      Ex (List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) a1 t)
+      Ex (List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) a t)
     | S.Type.TRecord xs ->
       Ex (T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs))
-    | S.Type.TSingleton t -> Ex (Sugar.Type.singleton (modu env t))
+    | S.Type.TSingleton t -> Ex (Sugar.Type.singleton (typ env t))
     | S.Type.TWrapped t -> Ex (Sugar.Type.wrap (typ env t))
     | S.Type.TMod (a, t) ->
       let env, a = Env.enter_mod a env in
       Ex (List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t))
-
-  and modu env (TMod (a, t)) =
-    let env, a = Env.enter_mod a env in
-    List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t)
 
   and path env p =
     trace
@@ -318,16 +315,18 @@ module Elab = struct
     @@ fun () ->
     match S.Type.view t with
     | S.Type.TPrim PUnit -> T.Expr.EConst (CUnit ())
-    | S.Type.TArrow (_, TMod (a1, t1), eff, t2) ->
-      let env, a1 = Env.enter_mod a1 env in
+    | S.Type.TArrow (_, t1, eff, t2) ->
+      let a, t1 = S.Type.as_module t1 in
+      let env, a = Env.enter_mod a env in
       (* TODO: What to do with a2? *)
       let e = materialize env t2 in
       let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env t1) eff e in
-      List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a1 e
+      List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
     | S.Type.TRecord ts ->
       let f (x, t) = S.Var.name x, materialize env t in
       T.Expr.ERecord (List.map f ts)
-    | S.Type.TSingleton (TMod (a, t)) ->
+    | S.Type.TSingleton t ->
+      let a, t = S.Type.as_module t in
       let env, a = Env.enter_mod a env in
       let t = Type.typ env t in
       let t = List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a t in
@@ -376,7 +375,8 @@ module Elab = struct
       let e2 = T.Expr.EProj (EVar tmp, S.Var.name x) in
       let e = Sugar.Expr.repack aks tmp e1 e2 (Type.typ env t) in
       aks, e
-    | S.Expr.EFun (x, TMod (a, t), eff, e) ->
+    | S.Expr.EFun (x, t, eff, e) ->
+      let a, t = S.Type.as_module t in
       let env, a = Env.add_tvar a env in
       let t1 = Type.typ env t in
       let env, x = Env.add_var x env in
@@ -392,7 +392,7 @@ module Elab = struct
         e
       in
       [], e
-    | S.Expr.EType t -> [], Sugar.Expr.singleton (Type.modu env t)
+    | S.Expr.EType t -> [], Sugar.Expr.singleton (Type.typ env t)
     | S.Expr.EExtern (s, t) -> [], T.Expr.EExtern (s, Type.typ env t)
     | S.Expr.EWrap (x, _) -> [], Sugar.Expr.wrap (expr env x |> snd)
     | S.Expr.EUnwrap e -> [], Sugar.Expr.unwrap (snd (expr env e))
@@ -403,7 +403,8 @@ module Elab = struct
       let e = List.fold_left (fun e (Ex t : Ex.typ) -> T.Expr.ETyApp (e, t)) e tc in
       let e = Sugar.Expr.eff_app e Implicit (materialize env t) in
       [], e
-    | S.Expr.EGen (TMod (a, t), e) ->
+    | S.Expr.EGen (t, e) ->
+      let a, t = S.Type.as_module t in
       let env, a = Env.add_tvar a env in
       let aks, e = expr env e in
       assert (aks = []);
@@ -421,20 +422,16 @@ module Elab = struct
       in
       Env.module_tvars env, Sugar.Expr.unpack aks' x e1 e2
     | S.Expr.EMod (a, e) ->
-      let env, a = Env.enter_mod a env in
-      [], snd (expr env e)
-    | S.Expr.EUse e -> Env.module_tvars env, snd (expr env e)
-
-  and modu env (S.Expr.EMod (a, e) : S.Expr.modu) =
-    let env, aks = Env.enter_mod a env in
-    let aks', e = expr env e in
-    let _ =
-      let eq (Ex a : Ex.tvar) (Ex a' : Ex.tvar) =
-        T.Kind.hequal (T.TVar.kind a) (T.TVar.kind a') <> None
+      let env, aks = Env.enter_mod a env in
+      let aks', e = expr env e in
+      let _ =
+        let eq (Ex a : Ex.tvar) (Ex a' : Ex.tvar) =
+          T.Kind.hequal (T.TVar.kind a) (T.TVar.kind a') <> None
+        in
+        assert (List.equal eq aks aks')
       in
-      assert (List.equal eq aks aks')
-    in
-    e
+      [], e
+    | S.Expr.EUse e -> Env.module_tvars env, snd (expr env e)
 
   and bind env b =
     trace
