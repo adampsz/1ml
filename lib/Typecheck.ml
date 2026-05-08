@@ -20,6 +20,7 @@ module Env : sig
   val enter_field : T.Var.t -> t -> t
   val path : t -> T.TVar.t T.Path.t
   val domain : t -> T.TVar.Set.t
+  val uvar : t -> T.Type.t
   val for_subtype : t -> t * T.Zipper.t
   val for_pp : t -> Pretty.Env.t
 end = struct
@@ -49,6 +50,7 @@ end = struct
   let enter_field x env = { env with path = PProj (env.path, x) }
   let domain env = env.tvars
   let path env = env.path
+  let uvar env = TInfer (T.UVar.fresh (domain env)) |> T.Type.wrap
   let for_subtype env = env, T.Zipper.of_path env.path
 
   let for_pp env =
@@ -154,8 +156,6 @@ module Subtype = struct
 
   exception SubtypeError of string * Env.t * T.Type.t * T.Type.t
 
-  let uvar env = TInfer (T.UVar.fresh (Env.domain env)) |> wrap
-
   (**
     Subtyping rule [Γ ⊢ t′ ≤ t].
 
@@ -204,31 +204,28 @@ module Subtype = struct
       zip, f
     (* Unification *)
     | TInfer z', TRecord xs ->
-      let t' = wrap (TRecord (List.map (fun (x, _) -> x, uvar env) xs)) in
+      let t' = wrap (TRecord (List.map (fun (x, _) -> x, Env.uvar env) xs)) in
       assert (T.Type.resolve z' t');
       typ (env, zip) t' t
     | TRecord xs', TInfer z ->
-      let t = wrap (TRecord (List.map (fun (x', _) -> x', uvar env) xs')) in
+      let t = wrap (TRecord (List.map (fun (x', _) -> x', Env.uvar env) xs')) in
       assert (T.Type.resolve z t);
       typ (env, zip) t' t
     | TInfer z', TArrow (x, t1, Explicit Impure, t2)
       when T.Type.is_small t1 && T.Type.is_small t2 ->
-      let t1' = uvar env
-      and t2' = uvar env in
-      let t' = TArrow (x, t1', Explicit Impure, t2') |> wrap in
+      let t' = TArrow (x, Env.uvar env, Explicit Impure, Env.uvar env) |> wrap in
       assert (T.Type.resolve z' t');
       typ (env, zip) t' t
     | TArrow (x, t1', Explicit _, t2'), TInfer z
       when T.Type.is_small t1' && T.Type.is_small t2' ->
-      let t1 = uvar env
-      and t2 = uvar env in
-      let t = TArrow (x, t1, Explicit Impure, t2) |> wrap in
+      let t = TArrow (x, Env.uvar env, Explicit Impure, Env.uvar env) |> wrap in
       assert (T.Type.resolve z t);
       typ (env, zip) t' t
     | TInfer z, t | t, TInfer z ->
       if T.Type.resolve z (wrap t)
       then zip, Fun.id
-      else raise (SubtypeError ("infer", env, wrap (TInfer z), wrap t)) (* Subtyping *)
+      else raise (SubtypeError ("infer", env, wrap (TInfer z), wrap t))
+    (* Subtyping *)
     | TAbstr p', TAbstr p when T.Path.equal (equal env zip) p' p -> zip, Fun.id
     | _, TAbstr p ->
       let t = T.Subst.typ (Env.subst (env, zip)) t in
@@ -255,11 +252,6 @@ module Subtype = struct
       let xs = List.map (fun (x, t) -> x, T.Subst.typ (Env.subst (env, zip)) t) xs in
       zip, fun e -> T.Expr.EStruct (BIncl (Private, e, xs') :: bs, xs)
     | TRecord _, _ -> raise (SubtypeError ("record", env, t', t))
-    (*
-       Γ,a₁ ⊢ t₁ ≤ ∃α₁′. t₁′ ↑ tₐ     Γ,a₁ ⊢ (∃a₂′. t₂′)[tₐ/a₁′] ≤ (∃a₂. t₂)
-      ----------------------------------------------------------------------
-       Γ ⊢ (∀a₁′. t₁′ →ͺ∃a₂'. t₂′) ≤ (∀α₁.t₁ →ͺ∃a₂. t₂)
-    *)
     | TArrow (_, t1', Explicit eff', t2'), TArrow (x, t1, Explicit eff, t2)
       when T.Effect.sub eff' eff ->
       let (a1', t1'), (a1, t1) = T.Type.as_module t1', T.Type.as_module t1 in
@@ -285,11 +277,8 @@ module Subtype = struct
       zip, f
     | TArrow _, _ -> raise (SubtypeError ("arrow", env, t', t))
     | TSingleton t', TSingleton t
-    (* TODO: remove these is_empty checks*)
-      when T.TVar.is_empty (fst (T.Type.as_module t'))
-           && T.TVar.is_empty (fst (T.Type.as_module t))
-           && T.Type.is_path (Env.path env) t
-           && T.Type.is_small t' -> T.Zipper.set t' zip, Fun.id
+      when T.Type.is_path (Env.path env) t && T.Type.is_small t' ->
+      T.Zipper.set t' zip, Fun.id
     | TSingleton t', TSingleton t ->
       let t = T.Subst.typ (Env.subst (env, zip)) t in
       let _ = typ (env, zip) t' t, typ (env, zip) t t' in
