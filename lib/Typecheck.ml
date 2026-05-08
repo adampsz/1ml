@@ -74,6 +74,22 @@ module Implicit = struct
       T.Type.CRecord (List.map (fun (x, k) -> x, concretize env k) ks)
   ;;
 
+  let rec materialize env t =
+    match T.Type.view t with
+    | TPrim PUnit -> T.Expr.EConst (CUnit ())
+    | TArrow (_, t1, eff, t2) ->
+      let a, t1 = T.Type.as_module t1 in
+      let env = T.TVar.Set.add a env in
+      T.Expr.EFun (T.Var.fresh "a", t1, eff, materialize env t2)
+    | TRecord ts ->
+      let bind (x, t) = T.Expr.BVal (x, materialize env t) in
+      T.Expr.EStruct (List.map bind ts, ts)
+    | TSingleton t -> T.Expr.EType t
+    | TWrapped t -> T.Expr.EWrap (materialize env t, TWrapped t |> T.Type.wrap)
+    | TMod (a, t) -> materialize (T.TVar.Set.add a env) t
+    | _ -> assert false
+  ;;
+
   let generalize level t =
     let rec typ acc t =
       match view t with
@@ -83,7 +99,7 @@ module Implicit = struct
         let t1 = TInfer z |> wrap in
         let t1 = T.Type.as_type (a, TSingleton t1 |> wrap)
         and t2 = snd acc in
-        ( (fun e -> T.Expr.EGen (t1, fst acc e))
+        ( (fun e -> T.Expr.EFun (T.Var.fresh "a", t1, Implicit, fst acc e))
         , T.Type.TArrow (T.Var.fresh "a", t1, Implicit, t2) |> wrap )
       | T.Type.TInfer _ -> acc
       | T.Type.TAbstr p -> path acc p
@@ -114,7 +130,7 @@ module Implicit = struct
         let tc = concretize env (T.TVar.kind a) in
         let t1 = T.Subst.typ (T.Subst.one a tc) t1
         and t2 = T.Subst.typ (T.Subst.one a tc) t2 in
-        aux ((fun e -> T.Expr.EInst (inst e, tc, t1)), t2)
+        aux ((fun e -> T.Expr.EApp (inst e, tc, Implicit, materialize env t1)), t2)
       | _ -> inst, t
     in
     aux (Fun.id, t)
@@ -163,7 +179,7 @@ module Subtype = struct
     | _, T.Type.TArrow (_, t1, Implicit, t2) ->
       let a, _ = T.Type.as_module t1 in
       let zip, f = typ (Env.add_tvar a env, zip) t' t2 in
-      zip, fun e -> T.Expr.EGen (t1, f e)
+      zip, fun e -> T.Expr.EFun (T.Var.fresh "a", t1, Implicit, f e)
     | TArrow (_, _, Implicit, _), _ ->
       let inst, t' = Implicit.instantiate (Env.domain env) t' in
       let zip, f = typ (env, zip) t' t in
@@ -196,18 +212,16 @@ module Subtype = struct
       assert (T.Type.resolve z t);
       typ (env, zip) t' t
     | TInfer z', TArrow (x, t1, Explicit Impure, t2)
-    (* TODO: T.Type.is_small t1 *)
-      when T.TVar.is_empty (fst (T.Type.as_module t1)) && T.Type.is_small t2 ->
+      when T.Type.is_small t1 && T.Type.is_small t2 ->
       let t1' = uvar env
-      and t2' = T.Type.TMod (T.TVar.empty, uvar env) |> T.Type.wrap in
+      and t2' = uvar env in
       let t' = TArrow (x, t1', Explicit Impure, t2') |> wrap in
       assert (T.Type.resolve z' t');
       typ (env, zip) t' t
     | TArrow (x, t1', Explicit _, t2'), TInfer z
-    (* TODO: T.Type.is_small t1' *)
-      when T.TVar.is_empty (fst (T.Type.as_module t1')) && T.Type.is_small t2' ->
+      when T.Type.is_small t1' && T.Type.is_small t2' ->
       let t1 = uvar env
-      and t2 = T.Type.TMod (T.TVar.empty, uvar env) |> T.Type.wrap in
+      and t2 = uvar env in
       let t = TArrow (x, t1, Explicit Impure, t2) |> wrap in
       assert (T.Type.resolve z t);
       typ (env, zip) t' t
@@ -336,16 +350,11 @@ module Check = struct
     T.Subst.typ aux t
   ;;
 
-  let path_prepend_compat env (T.Type.TMod (a, t)) =
-    ( T.TVar.kind a
-    , path_map a (T.Path.prepend (T.Type.Glue.path_to_cons_path (Env.path env))) t )
-  ;;
-
   let path_prepend env t =
     match T.Type.view t with
     | T.Type.TMod (a, t) ->
-      let k, t = path_prepend_compat env (T.Type.TMod (a, t)) in
-      k, t, fun e -> T.Expr.EUse e
+      let f = T.Path.prepend (T.Type.Glue.path_to_cons_path (Env.path env)) in
+      T.TVar.kind a, path_map a f t, fun e -> T.Expr.EUse e
     | _ -> T.Kind.KEmpty, t, Fun.id
   ;;
 
@@ -437,7 +446,7 @@ module Check = struct
       T.Kind.KEmpty, T.Type.TSingleton (T.Type.as_type (a, t)) |> wrap
     | S.TWrapped t ->
       let a, t = modu_typ env t in
-      T.Kind.KEmpty, T.Type.TWrapped (TMod (a, t) |> wrap) |> wrap
+      T.Kind.KEmpty, T.Type.TWrapped (T.Type.as_type (a, t)) |> wrap
 
   and decl env d =
     trace
@@ -542,9 +551,7 @@ module Check = struct
         | T.Type.TArrow (_, t1, T.Type.Explicit eff, t2) -> T.Type.as_module t1, eff, t2
         | T.Type.TInfer z ->
           let t1 = TInfer (T.UVar.fresh dom) |> wrap
-          and t2 =
-            T.Type.TMod (T.TVar.empty, TInfer (T.UVar.fresh dom) |> wrap) |> wrap
-          in
+          and t2 = TInfer (T.UVar.fresh dom) |> wrap in
           let t = T.Type.TArrow (T.Var.fresh "a", t1, Explicit Impure, t2) in
           assert (T.Type.resolve z (wrap t));
           (T.TVar.empty, t1), T.Effect.Impure, t2

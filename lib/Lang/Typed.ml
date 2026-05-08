@@ -75,24 +75,35 @@ end
 
 module Kind = struct
   type t =
-    | KEmpty
+    | KEmpty [@deprecated]
     | KType
     | KArrow of t * t
-    | KRecord of (Var.t * t) list [@printer Format.pp_print_record Var.pp pp]
+    | KRecord of (Var.t * t) List.t [@printer Format.pp_print_record Var.pp pp]
   [@@deriving show]
 
   type kind = t
 
   let equal = ( = )
 
-  let rec is_empty = function
+  let[@deprecated] rec is_empty = function
     | KEmpty -> true
     | KType -> false
     | KRecord xs -> List.for_all (fun (_, k) -> is_empty k) xs
     | KArrow (_, k) -> is_empty k
   ;;
 
-  let eff k = if is_empty k then Effect.Pure else Effect.Impure
+  let[@deprecated] eff k = if is_empty k then Effect.Pure else Effect.Impure
+
+  module Option = struct
+    type nonrec t = t option
+
+    let pp ppf = function
+      | None -> Format.pp_print_string ppf "{ }"
+      | Some k -> pp ppf k
+    ;;
+
+    let eff k = if Option.is_none k then Effect.Pure else Effect.Impure
+  end
 end
 
 module TVar : sig
@@ -101,12 +112,12 @@ module TVar : sig
   val id : t -> int
   val kind : t -> Kind.t
   val fresh : Kind.t -> t
-  val empty : t
+  val [@deprecated] empty : t
   val defer : unit -> t * (Kind.t -> unit)
   val clone : t -> t
   val equal : t -> t -> bool
   val compare : t -> t -> int
-  val is_empty : t -> bool
+  val [@deprecated] is_empty : t -> bool
   val pp : Format.formatter -> t -> unit
 
   module Set : Set.S with type elt = t
@@ -273,7 +284,7 @@ module Path = struct
   type 'a t = 'a path
 
   let pp = pp_path
-  let empty = PVar TVar.empty
+  let[@deprecated] empty = PVar TVar.empty
 
   let rec equal arg p' p =
     match p', p with
@@ -356,7 +367,7 @@ module Type = struct
   [@@deriving show]
 
   and cons =
-    | CEmpty
+    | CEmpty [@deprecated]
     | CType of typ
     | CLam of TVar.t * cons
     | CRecord of (Var.t * cons) list [@printer Format.pp_print_record Var.pp pp_cons]
@@ -702,8 +713,6 @@ module Expr = struct
     | EExtern of string * Type.t
     | EWrap of expr * Type.typ
     | EUnwrap of expr
-    | EInst of expr * Type.cons * Type.t
-    | EGen of Type.typ * expr
     | ESeal of expr * Type.cons * Type.t
     | EMod of TVar.t * expr
     | EUse of expr

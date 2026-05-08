@@ -308,37 +308,6 @@ module Type = struct
 end
 
 module Elab = struct
-  let rec materialize env t =
-    trace
-      (fun m -> m ~header:"materialize" "%a" S.Type.pp t)
-      (fun e m -> m ~header:"materialize" "~> %a" T.Expr.pp e)
-    @@ fun () ->
-    match S.Type.view t with
-    | S.Type.TPrim PUnit -> T.Expr.EConst (CUnit ())
-    | S.Type.TArrow (_, t1, eff, t2) ->
-      let a, t1 = S.Type.as_module t1 in
-      let env, a = Env.enter_mod a env in
-      (* TODO: What to do with a2? *)
-      let e = materialize env t2 in
-      let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env t1) eff e in
-      List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
-    | S.Type.TRecord ts ->
-      let f (x, t) = S.Var.name x, materialize env t in
-      T.Expr.ERecord (List.map f ts)
-    | S.Type.TSingleton t ->
-      let a, t = S.Type.as_module t in
-      let env, a = Env.enter_mod a env in
-      let t = Type.typ env t in
-      let t = List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a t in
-      Sugar.Expr.singleton t
-    | S.Type.TWrapped t -> Sugar.Expr.wrap (materialize env t)
-    | S.Type.TMod (a, t) ->
-      (* TODO: What to do with a? *)
-      let env, a = Env.enter_mod a env in
-      materialize env t
-    | _ -> assert false
-  ;;
-
   let rec expr env e =
     trace
       (fun m ->
@@ -396,20 +365,6 @@ module Elab = struct
     | S.Expr.EExtern (s, t) -> [], T.Expr.EExtern (s, Type.typ env t)
     | S.Expr.EWrap (x, _) -> [], Sugar.Expr.wrap (expr env x |> snd)
     | S.Expr.EUnwrap e -> [], Sugar.Expr.unwrap (snd (expr env e))
-    | S.Expr.EInst (e, tc, t) ->
-      let tc = Type.cons env tc in
-      let aks, e = expr env e in
-      assert (aks = []);
-      let e = List.fold_left (fun e (Ex t : Ex.typ) -> T.Expr.ETyApp (e, t)) e tc in
-      let e = Sugar.Expr.eff_app e Implicit (materialize env t) in
-      [], e
-    | S.Expr.EGen (t, e) ->
-      let a, t = S.Type.as_module t in
-      let env, a = Env.add_tvar a env in
-      let aks, e = expr env e in
-      assert (aks = []);
-      let e = Sugar.Expr.eff_lam (T.Var.fresh ()) (Type.typ env t) Implicit e in
-      [], List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
     | S.Expr.ESeal (e, tc, t) ->
       let a, e = S.Expr.as_module e in
       let x = T.Var.fresh () in
