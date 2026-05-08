@@ -722,4 +722,9 @@ module Expr = struct
     | EMod (a, e) -> a, e
     | e -> TVar.empty, e
   ;;
+
+  let as_expr = function
+    | a, e when TVar.is_empty a -> e
+    | a, e -> EMod (a, e)
+  ;;
 end

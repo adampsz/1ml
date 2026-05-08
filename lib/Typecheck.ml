@@ -382,7 +382,7 @@ module Check = struct
       let abstr = T.Type.TAbstr (T.Type.Glue.path_to_cons_path (Env.path env)) |> wrap in
       T.Kind.KType, T.Type.TSingleton abstr |> wrap
     | S.TExpr e ->
-      let eff, T.Type.TMod (a, t), _ = modu_expr env e in
+      let eff, a, t, _ = modu_expr env e in
       let _, t = Implicit.instantiate (Env.domain env) t in
       (match eff, view t with
        | T.Effect.Pure, T.Type.TSingleton t when T.TVar.is_empty a ->
@@ -414,9 +414,9 @@ module Check = struct
     | S.TArrow (x, t1, eff, T.Effect.Impure, t2) ->
       if eff == Implicit then failwith "todo error implicit function cannot be impure";
       let x = T.Var.fresh (S.Node.data x) in
-      let (T.Type.TMod (a1, t1)) = modu_typ env t1 in
+      let a1, t1 = modu_typ env t1 in
       let env = Env.add_mod x a1 t1 env in
-      let (TMod (a2, t2)) = modu_typ env t2 in
+      let a2, t2 = modu_typ env t2 in
       ( T.Kind.KEmpty
       , T.Type.TArrow
           ( x
@@ -426,17 +426,17 @@ module Check = struct
         |> wrap )
     | S.TArrow (x, t1, eff, T.Effect.Pure, t2) ->
       let x = T.Var.fresh (S.Node.data x) in
-      let (T.Type.TMod (a1, t1)) = modu_typ env t1 in
+      let a1, t1 = modu_typ env t1 in
       let env = Env.add_mod x a1 t1 env in
       let k2, t2 = typ (Env.enter_lam a1 env) t2 in
       let eff = if eff = Implicit then T.Type.Implicit else T.Type.Explicit Pure in
       ( T.Kind.KArrow (T.TVar.kind a1, k2)
       , T.Type.TArrow (x, T.Type.as_type (a1, t1), eff, t2) |> wrap )
     | S.TSingletonType t ->
-      let (TMod (a, t)) = modu_typ env t in
+      let a, t = modu_typ env t in
       T.Kind.KEmpty, T.Type.TSingleton (T.Type.as_type (a, t)) |> wrap
     | S.TWrapped t ->
-      let (T.Type.TMod (a, t)) = modu_typ env t in
+      let a, t = modu_typ env t in
       T.Kind.KEmpty, T.Type.TWrapped (TMod (a, t) |> wrap) |> wrap
 
   and decl env d =
@@ -483,8 +483,8 @@ module Check = struct
        | T.Type.TPrim PBool -> ()
        | T.Type.TInfer z -> assert (T.Type.resolve z (wrap (T.Type.TPrim PBool)))
        | _ -> failwith "todo error");
-      let eff1, T.Type.TMod (a1, t1), e1 = modu_expr env e1
-      and eff2, T.Type.TMod (a2, t2), e2 = modu_expr env e2
+      let eff1, a1, t1, e1 = modu_expr env e1
+      and eff2, a2, t2, e2 = modu_expr env e2
       and k, t = typ env t in
       let _, f1 = Subtype.typ (Env.for_subtype env) (TMod (a1, t1) |> wrap) t
       and _, f2 = Subtype.typ (Env.for_subtype env) (TMod (a2, t2) |> wrap) t in
@@ -514,24 +514,21 @@ module Check = struct
        | Some (x, t) -> k, eff, t, T.Expr.EProj (e, x, t)
        | None -> failwith "todo error missing field")
     | S.EFun (x, t1, feff, e2) ->
-      let (T.Type.TMod (a1, t1)) = modu_typ env t1 in
+      let a1, t1 = modu_typ env t1 in
       let x = T.Var.fresh (S.Node.data x) in
       let env = Env.add_mod x a1 t1 env in
       let t1 = T.Type.as_type (a1, t1) in
-      let eff, T.Type.TMod (a2, t2), e2 = modu_expr env e2 in
-      let t2 = T.Type.as_type (a2, t2) in
+      let eff, a2, t2, e2 = modu_expr env e2 in
       let eff =
         match feff, eff with
         | Explicit, eff -> T.Type.Explicit eff
-        | Implicit, T.Effect.Pure -> T.Type.Implicit
-        | Implicit, T.Effect.Impure ->
-          failwith "todo error implicit function cannot be impure"
+        | Implicit, Pure -> T.Type.Implicit
+        | Implicit, Impure -> failwith "todo error implicit function cannot be impure"
       in
       let t2, e2 =
         match eff with
-        | Explicit Impure -> t2, e2
-        | Explicit Pure | Implicit ->
-          T.Type.as_module t2 |> snd, T.Expr.as_module e2 |> snd
+        | Explicit Impure -> T.Type.as_type (a2, t2), T.Expr.as_expr (a2, e2)
+        | Explicit Pure | Implicit -> t2, e2
       in
       let t = T.Type.TArrow (x, t1, eff, t2) |> wrap
       and e = T.Expr.EFun (x, t1, eff, e2) in
@@ -567,7 +564,7 @@ module Check = struct
       let e = e (T.Expr.EApp (inst (EVar x), tc, Explicit eff, f (EVar x'))) in
       k2, eff, t2, e
     | S.EType t ->
-      let (TMod (a, t)) = modu_typ env t in
+      let a, t = modu_typ env t in
       let t = T.Type.as_type (a, t) in
       T.Kind.KEmpty, T.Effect.Pure, T.Type.TSingleton t |> wrap, T.Expr.EType t
     | S.ESeal (x, t) ->
@@ -646,17 +643,22 @@ module Check = struct
     let a, set = T.TVar.defer () in
     let k, t = typ (Env.enter_mod a env) node in
     set k;
-    T.Type.TMod (a, t)
+    a, t
 
   and modu_expr env node =
     let a, set = T.TVar.defer () in
     let k, eff, t, e = expr (Env.enter_mod a env) node in
     set k;
+    eff, a, t, e
+
+  and modu_expr_compat env node =
+    let eff, a, t, e = modu_expr env node in
     eff, T.Type.TMod (a, t), T.Expr.EMod (a, e)
   ;;
 
   let file env file =
-    let _, _, e = modu_expr env (S.Node.map (fun xs -> Lang.Surface.EStruct xs) file) in
-    e
+    let e = S.Node.map (fun xs -> Lang.Surface.EStruct xs) file in
+    let _, a, _, e = modu_expr env e in
+    T.Expr.as_expr (a, e)
   ;;
 end
