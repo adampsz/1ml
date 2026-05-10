@@ -319,7 +319,7 @@ module Elab = struct
     match e with
     | S.Expr.EVar x -> [], T.Expr.EVar (Env.find_var x env)
     | S.Expr.EConst c -> [], T.Expr.EConst c
-    | S.Expr.ECond (x, e1, e2, _) ->
+    | S.Expr.ECond (x, e1, e2, t) ->
       let aks1, e1 = expr env e1
       and aks2, e2 = expr env e2 in
       let _ =
@@ -328,7 +328,7 @@ module Elab = struct
         in
         assert (List.equal eq aks1 aks2)
       in
-      aks1, T.Expr.ECond (T.Expr.EVar (Env.find_var x env), e1, e2)
+      Env.module_tvars env, T.Expr.ECond (EVar (Env.find_var x env), e1, e2)
     | S.Expr.EStruct (xs, ts) ->
       let env, xs = List.fold_left_map bind env xs in
       let aux (x, _) = S.Var.name x, T.Expr.EVar (Env.find_var x env) in

@@ -483,12 +483,16 @@ module Check = struct
        | _ -> failwith "todo error");
       let eff1, a1, t1, e1 = modu_expr env e1
       and eff2, a2, t2, e2 = modu_expr env e2
-      and k, t = typ env t in
-      let _, f1 = Subtype.typ (Env.for_subtype env) (TMod (a1, t1) |> wrap) t
-      and _, f2 = Subtype.typ (Env.for_subtype env) (TMod (a2, t2) |> wrap) t in
+      and a, t = modu_typ env t in
+      let t1, t2 = T.Type.as_type (a1, t1), T.Type.as_type (a2, t2)
+      and e1, e2 = T.Expr.as_expr (a1, e1), T.Expr.as_expr (a2, e2)
+      and t = T.Type.as_type (a, t) in
+      let _, f1 = Subtype.typ (Env.for_subtype env) t1 t
+      and _, f2 = Subtype.typ (Env.for_subtype env) t2 t in
+      let k, t, e = path_prepend env t in
       let eff = T.Kind.eff k in
       let eff = T.Effect.join eff (T.Effect.join eff1 eff2) in
-      k, eff, t, T.Expr.ECond (x, f1 e1, f2 e2, t)
+      k, eff, t, e (T.Expr.ECond (x, f1 e1, f2 e2, t))
     | S.EStruct xs ->
       let _, xs = List.fold_left_map bind env xs in
       let ks = List.concat_map (fun (ks, _, _, _) -> ks) xs
