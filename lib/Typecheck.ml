@@ -24,6 +24,7 @@ module Env : sig
   val path : t -> T.TVar.t T.Path.t
   val domain : t -> T.TVar.Set.t
   val uvar : t -> T.Type.t
+  val eff : T.Type.t -> t -> T.Effect.t
   val for_subtype : t -> t * T.Zipper.t
   val for_pp : t -> Pretty.Env.t
 end = struct
@@ -59,6 +60,7 @@ end = struct
   let domain env = env.tvars
   let path env = env.path
   let uvar env = TInfer (T.UVar.fresh (domain env)) |> wrap
+  let eff t env = T.Type.eff (T.Path.var env.path) t
   let for_subtype env = env, T.Zipper.of_path env.path
 
   let for_pp env =
@@ -462,7 +464,7 @@ module Check = struct
       let _, f1 = Subtype.typ (Env.for_subtype env) t1 t
       and _, f2 = Subtype.typ (Env.for_subtype env) t2 t in
       let k, t, e = path_prepend env t in
-      let eff = T.Kind.eff k in
+      let eff = Env.eff t env in
       let eff = T.Effect.join eff (T.Effect.join eff1 eff2) in
       k, eff, t, e (T.Expr.ECond (x, f1 e1, f2 e2, t))
     | S.EStruct xs ->
@@ -545,7 +547,7 @@ module Check = struct
       and k, t = typ env t in
       let zip, c = Subtype.typ (Env.for_subtype env) t' t in
       let e = T.Expr.ESeal (c (EVar x), T.Zipper.get zip, t) in
-      k, T.Kind.eff k, t, e
+      k, Env.eff t env, t, e
     | S.EWrap (x, t) ->
       let k, t = typ env t in
       let t =
@@ -581,10 +583,10 @@ module Check = struct
       let k2, t2, e2 = path_prepend env t2 in
       let _, f = Subtype.typ (Env.for_subtype env) t1 t2 in
       let e = f (e2 (T.Expr.EUnwrap (inst (EVar x)))) in
-      k2, T.Kind.eff k2, t2, e
+      k2, Env.eff t2 env, t2, e
     | S.EExtern (x, t) ->
       let k, t = typ env t in
-      k, T.Kind.eff k, t, T.Expr.EExtern (x, t)
+      k, Env.eff t env, t, T.Expr.EExtern (x, t)
 
   and bind env b =
     trace

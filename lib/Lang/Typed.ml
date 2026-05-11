@@ -92,8 +92,6 @@ module Kind = struct
     | KArrow (_, k) -> is_empty k
   ;;
 
-  let[@deprecated] eff k = if is_empty k then Effect.Pure else Effect.Impure
-
   module Option = struct
     type nonrec t = t option
 
@@ -473,6 +471,17 @@ module Type = struct
     in
     typ TVar.Set.empty t
   ;;
+
+  let rec is_generative a t =
+    match view t with
+    | TAbstr p -> TVar.equal a (Path.var p)
+    | TInfer _ | TPrim _ | TWrapped _ | TMod _ -> false
+    | TRecord ts -> List.exists (fun (_, t) -> is_generative a t) ts
+    | TArrow (_, _, _, t) -> is_generative a t
+    | TSingleton t -> is_generative a t
+  ;;
+
+  let eff a t = if is_generative a t then Effect.Impure else Effect.Pure
 
   let extrude z t =
     let rec typ env t =
