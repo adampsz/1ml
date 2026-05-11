@@ -390,10 +390,7 @@ module Type = struct
     | _ -> TVar.empty, t
   ;;
 
-  let as_type = function
-    | a, t when TVar.is_empty a -> t
-    | a, t -> TMod (a, t) |> wrap
-  ;;
+  let as_type a t = if TVar.is_empty a then t else TMod (a, t) |> wrap
 
   module Cons = struct
     type t = cons
@@ -535,7 +532,7 @@ module Subst = struct
     | TArrow (x, t1, eff, t2) ->
       let a, t1 = as_module t1 in
       let a, rename = freshen a rename in
-      let t = TArrow (x, as_type (a, typ ~rename f t1), eff, typ ~rename f t2) in
+      let t = TArrow (x, as_type a (typ ~rename f t1), eff, typ ~rename f t2) in
       Type.wrap t
     | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap
     | TSingleton t -> TSingleton (typ ~rename f t) |> Type.wrap
@@ -732,8 +729,5 @@ module Expr = struct
     | e -> TVar.empty, e
   ;;
 
-  let as_expr = function
-    | a, e when TVar.is_empty a -> e
-    | a, e -> EMod (a, e)
-  ;;
+  let as_expr a e = if TVar.is_empty a then e else EMod (a, e)
 end

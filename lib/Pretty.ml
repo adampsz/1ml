@@ -54,7 +54,7 @@ module Abstr = struct
       let a, t1 = T.Type.as_module t1 in
       let env = Env.add_tvar a env in
       let env = Env.add_var x t1 env in
-      find_in_type p (DApp (out, T.Type.as_type (a, t1))) env t2
+      find_in_type p (DApp (out, T.Type.as_type a t1)) env t2
     | _ -> None
 
   and find_in_singleton p out env t =
