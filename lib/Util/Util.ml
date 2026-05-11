@@ -1,3 +1,5 @@
+include Extra
+
 type ('a, 'b) eq = ('a, 'b) Type.eq = Equal : ('a, 'a) eq
 
 module Counter = struct
@@ -67,104 +69,6 @@ end = struct
 
   let get_opt c = !c
   let is_set c = Option.is_some !c
-end
-
-module String = struct
-  include String
-
-  let repeat s n =
-    let len = String.length s in
-    let res = Bytes.create (n * len) in
-    for i = 0 to pred n do
-      Bytes.blit_string s 0 res (i * len) len
-    done;
-    Bytes.unsafe_to_string res
-  ;;
-
-  module Set = Set.Make (String)
-  module Map = Map.Make (String)
-end
-
-module Option = struct
-  include Option
-
-  let fold2 ~none ~some x y =
-    match x, y with
-    | Some x, Some y -> some x y
-    | None, None -> none
-    | _ -> invalid_arg "Option.fold2"
-  ;;
-
-  let map2 f x y =
-    match x, y with
-    | Some x, Some y -> Some (f x y)
-    | None, None -> None
-    | _ -> invalid_arg "Option.map2"
-  ;;
-end
-
-module List : sig
-  include module type of List
-
-  val fold_right_filter : ('a -> 'acc -> bool * 'acc) -> 'a list -> 'acc -> 'a list * 'acc
-  val fold_right_map : ('a -> 'acc -> 'b * 'acc) -> 'a list -> 'acc -> 'b list * 'acc
-
-  module Assoc : sig
-    val get : 'k -> ('k * 'v) list -> 'v
-    val get_opt : 'k -> ('k * 'v) list -> 'v option
-    val set : 'k -> 'v option -> ('k * 'v) list -> ('k * 'v) list
-    val update : 'k -> ('v option -> 'v option) -> ('k * 'v) list -> ('k * 'v) list
-    val map : ('v -> 'w) -> ('k * 'v) list -> ('k * 'w) list
-    val filter_map : ('v -> 'w option) -> ('k * 'v) list -> ('k * 'w) list
-  end
-end = struct
-  include List
-
-  let rec fold_right_filter f xs acc =
-    match xs with
-    | [] -> [], acc
-    | x :: xs ->
-      let xs, acc = fold_right_filter f xs acc in
-      let keep, acc = f x acc in
-      (if keep then x :: xs else xs), acc
-  ;;
-
-  let fold_right_map f xs acc =
-    let rec aux xs acc =
-      match xs with
-      | [] -> [], acc
-      | x :: xs ->
-        let ys, acc = aux xs acc in
-        let y, acc = f x acc in
-        y :: ys, acc
-    in
-    aux xs acc
-  ;;
-
-  module Assoc = struct
-    let get = assoc
-    let get_opt = assoc_opt
-
-    let update x f xs =
-      let add_opt xs = function
-        | None -> xs
-        | Some v -> (x, v) :: xs
-      in
-      let rec aux = function
-        | [] -> add_opt [] (f None)
-        | (y, v) :: xs when Stdlib.compare x y = 0 -> add_opt xs (f (Some v))
-        | xv :: xs -> xv :: aux xs
-      in
-      aux xs
-    ;;
-
-    let set x v xs = update x (Fun.const v) xs
-    let map f xs = List.map (fun (k, v) -> k, f v) xs
-
-    let filter_map f xs =
-      List.filter_map (fun (k, v) -> Option.map (fun v -> k, v) (f v)) xs
-    ;;
-  end
 end
 
 module type HType = sig
@@ -274,50 +178,6 @@ module HMap = struct
   end
 end
 
-module Format = struct
-  include Format
-
-  let sink = make_formatter (fun _ _ _ -> ()) (fun _ -> ())
-  let tprintf fmt ppf () = fprintf ppf fmt
-
-  let pp_print_record ?(pp_sep = tprintf ",@ ") ?(pp_ksep = tprintf " :@ ") =
-    fun pp_key pp_value ppf -> function
-    | [] -> pp_print_string ppf "{ }"
-    | xs ->
-      let pp_entry ppf (k, v) =
-        fprintf ppf "@[<2>%a%a%a@]" pp_key k pp_ksep () pp_value v
-      in
-      let br = pp_print_custom_break ~fits:("", 1, "") ~breaks:(",", -2, "") in
-      fprintf ppf "{@[<hv 1>@;%a%t@]}" (pp_print_list ~pp_sep pp_entry) xs br
-  ;;
-
-  let with_margin margin pp ppf x =
-    let g = Format.pp_get_geometry ppf () in
-    let max_indent = min g.max_indent (margin - 1) in
-    Format.pp_set_geometry ppf ~margin ~max_indent;
-    Fun.protect
-      ~finally:(fun () ->
-        Format.pp_set_geometry ppf ~margin:g.margin ~max_indent:g.max_indent)
-      (fun () -> pp ppf x)
-  ;;
-
-  let with_max_boxes boxes pp ppf x =
-    let b = Format.pp_get_max_boxes ppf () in
-    Format.pp_set_max_boxes ppf boxes;
-    Fun.protect ~finally:(fun () -> Format.pp_set_max_boxes ppf b) (fun () -> pp ppf x)
-  ;;
-end
-
-module PP = struct
-  open Format
-
-  let wrap w ppf fmt =
-    if w
-    then kfprintf (fun ppf -> kfprintf (dprintf ")") ppf fmt) ppf "("
-    else fprintf ppf fmt
-  ;;
-end
-
 module Trace : sig
   exception MaximumDepthExceeded
 
@@ -408,8 +268,7 @@ end = struct
   end
 
   let reporter file reporter =
-    let module R =
-      Reporter (struct
+    let module R = Reporter (struct
         let file = file
         let reporter = reporter
       end)
