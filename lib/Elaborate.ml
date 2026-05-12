@@ -175,20 +175,24 @@ module Env : sig
   val empty : t
   val add_var : S.Var.t -> t -> t * T.Var.t
   val find_var : S.Var.t -> t -> T.Var.t
-  val enter_mod : S.TVar.t -> t -> t * Ex.tvar list
+  val enter_mod : S.TVar.t -> t -> t
   val enter_field : S.Var.t -> t -> t
-  val enter_arrow : S.TVar.t * S.Type.t -> t -> t
+  val enter_arrow : S.TVar.t -> t -> t
   val add_tvar : S.TVar.t -> t -> t * Ex.tvar list
   val find_tvar : S.TVar.t -> t -> Ex.tvar Flat.t
   val module_tvars : t -> Ex.tvar list
+  val deps : t -> Ex.kind list
 end = struct
   type t =
     { module_tvars : Ex.tvar Flat.t option
     ; vars : T.Var.t S.Var.Map.t
     ; tvars : Ex.tvar Flat.t S.TVar.Map.t
+    ; deps : Ex.kind list
     }
 
-  let empty = { module_tvars = None; vars = S.Var.Map.empty; tvars = S.TVar.Map.empty }
+  let empty =
+    { module_tvars = None; vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; deps = [] }
+  ;;
 
   let add_var x env =
     let x' = T.Var.fresh ~name:(S.Var.name x) () in
@@ -213,8 +217,7 @@ end = struct
   ;;
 
   let enter_mod a env =
-    let env, a' = add_tvar a env in
-    { env with module_tvars = S.TVar.Map.find_opt a env.tvars }, a'
+    { env with module_tvars = S.TVar.Map.find_opt a env.tvars; deps = [] }
   ;;
 
   let enter_field x env =
@@ -224,7 +227,9 @@ end = struct
     | _ -> invalid_arg "Env.enter_field"
   ;;
 
-  let enter_arrow _ _ = failwith "todo enter arrow"
+  let enter_arrow x env =
+    { env with deps = Flat.fold_right List.cons (Flatten.kind (S.TVar.kind x)) env.deps }
+  ;;
 
   let find_tvar a env =
     match S.TVar.Map.find_opt a env.tvars with
@@ -237,39 +242,41 @@ end = struct
     | Some a -> Flat.to_list a
     | None -> []
   ;;
+
+  let deps env = env.deps
 end
 
 module Type = struct
   open Ex
 
   let rec typ env t =
-    let (Ex t) = ctyp env t in
-    match T.Type.kind t with
-    | T.Kind.KType -> (t : T.Type.ttyp)
-    | _ -> assert false
-
-  and ctyp env t : Ex.typ =
     trace
       (fun m -> m ~header:"typ" "%a" S.Type.pp t)
-      (fun (Ex t : Ex.typ) m -> m ~header:"typ" "~> %t" (fun ppf -> T.Type.pp ppf t))
+      (fun t m -> m ~header:"typ" "~> %t" (fun ppf -> T.Type.pp ppf t))
     @@ fun () ->
     match S.Type.view t with
-    | S.Type.TInfer _ ->
+    | TInfer _ ->
       Format.kasprintf failwith "unresolved type inference variable: %a" S.Type.pp t
-    | S.Type.TPrim p -> Ex (T.Type.TPrim p)
-    | S.Type.TAbstr p -> path env p
-    | S.Type.TArrow (_, t1, eff, t2) ->
+    | TPrim p -> T.Type.TPrim p
+    | TAbstr p ->
+      let (Ex t : Ex.typ) = path env p in
+      (match T.Type.kind t with
+       | KType -> t
+       | _ -> assert false)
+    | TArrow (_, t1, eff, t2) ->
       let a, t1 = S.Type.as_module t1 in
-      let env, a = Env.enter_mod a env in
-      let t = Sugar.Type.eff_arrow (typ env t1) eff (typ env t2) in
-      Ex (List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) a t)
-    | S.Type.TRecord xs ->
-      Ex (T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs))
-    | S.Type.TSingleton t -> Ex (Sugar.Type.singleton (typ env t))
-    | S.Type.TWrapped t -> Ex (Sugar.Type.wrap (typ env t))
-    | S.Type.TMod (a, t) ->
-      let env, a = Env.enter_mod a env in
-      Ex (List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) a (typ env t))
+      let env, aks = Env.add_tvar a env in
+      let t1 = typ (Env.enter_arrow a env) t1
+      and t2 = typ (Env.enter_mod a env) t2 in
+      let t = Sugar.Type.eff_arrow t1 eff t2 in
+      List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) aks t
+    | TRecord xs -> T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs)
+    | TSingleton t -> Sugar.Type.singleton (typ env t)
+    | TWrapped t -> Sugar.Type.wrap (typ env t)
+    | TMod (a, t) ->
+      let env, aks = Env.add_tvar a env in
+      let t = typ (Env.enter_mod a env) t in
+      List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) aks t
 
   and path env p =
     trace
@@ -291,7 +298,7 @@ module Type = struct
   and cons env c =
     let rec aux env acc = function
       | S.Type.CEmpty -> None
-      | S.Type.CType t -> Some (Flat.FTyp (acc (ctyp env t)))
+      | S.Type.CType t -> Some (Flat.FTyp (acc (Ex (typ env t) : Ex.typ)))
       | S.Type.CLam (a1, c2) ->
         let lam (Ex a1 : Ex.tvar) (Ex c2 : Ex.typ) : Ex.typ = Ex (TLam (a1, c2)) in
         let env, a1 = Env.add_tvar a1 env in
@@ -356,7 +363,7 @@ module Elab = struct
     | S.Expr.EApp (e1, tc, eff, e2) ->
       let e =
         let e = List.fold_left Sugar.Expr.ty_app (snd (expr env e1)) (Type.cons env tc) in
-        let env, _ = Env.enter_mod S.TVar.empty env in
+        let env = Env.enter_mod S.TVar.empty env in
         let e = Sugar.Expr.eff_app e eff (snd (expr env e2)) in
         e
       in
@@ -368,7 +375,8 @@ module Elab = struct
     | S.Expr.ESeal (e, tc, t) ->
       let a, e = S.Expr.as_module e in
       let x = T.Var.fresh () in
-      let env', aks' = Env.enter_mod a env in
+      let env', aks' = Env.add_tvar a env in
+      let env' = Env.enter_mod a env' in
       let _, e1 = expr env' e in
       let e2 =
         let e = T.Expr.EVar x in
@@ -377,7 +385,8 @@ module Elab = struct
       in
       Env.module_tvars env, Sugar.Expr.unpack aks' x e1 e2
     | S.Expr.EMod (a, e) ->
-      let env, aks = Env.enter_mod a env in
+      let env, aks = Env.add_tvar a env in
+      let env = Env.enter_mod a env in
       let aks', e = expr env e in
       let _ =
         let eq (Ex a : Ex.tvar) (Ex a' : Ex.tvar) =
