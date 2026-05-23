@@ -34,7 +34,6 @@ module Abstr = struct
   [@@deriving show]
 
   let rec concretize env = function
-    | T.Kind.KEmpty -> T.Type.CEmpty
     | T.Kind.KType -> T.Type.CType (TInfer (T.UVar.fresh env) |> T.Type.wrap)
     | T.Kind.KArrow (k1, k2) ->
       let x = T.TVar.fresh k1 in

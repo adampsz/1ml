@@ -15,25 +15,6 @@ module Flat = struct
     | FRecord of (S.Var.t * 'a t) list [@polyprinter Format.pp_print_record S.Var.pp]
   [@@deriving show]
 
-  let rec equal eq xs ys =
-    match xs, ys with
-    | FTyp x, FTyp y -> eq x y
-    | FTyp _, _ -> false
-    | FRecord xs, FRecord ys ->
-      List.equal (fun (a, x) (b, y) -> S.Var.equal a b && equal eq x y) xs ys
-    | FRecord _, _ -> false
-  ;;
-
-  let rec iter f = function
-    | FTyp x -> f x
-    | FRecord xs -> List.iter (fun (_, xs) -> iter f xs) xs
-  ;;
-
-  let rec fold_left f acc = function
-    | FTyp x -> f acc x
-    | FRecord xs -> List.fold_left (fun acc (_, xs) -> fold_left f acc xs) acc xs
-  ;;
-
   let rec fold_right f xs acc =
     match xs with
     | FTyp x -> f x acc
@@ -42,42 +23,15 @@ module Flat = struct
 
   let to_list xs = fold_right List.cons xs []
 
-  let rec fold_left2 f acc xs ys =
-    match xs, ys with
-    | FTyp x, FTyp y -> f acc x y
-    | FTyp _, _ -> invalid_arg "Flat.fold_left2"
-    | FRecord xs, FRecord ys ->
-      List.fold_left2 (fun acc (_, xs) (_, ys) -> fold_left2 f acc xs ys) acc xs ys
-    | FRecord _, _ -> invalid_arg "Flat.fold_left2"
-  ;;
-
-  let rec fold_right2 f xs ys acc =
-    match xs, ys with
-    | FTyp x, FTyp y -> f x y acc
-    | FTyp _, _ -> invalid_arg "Flat.fold_right2"
-    | FRecord xs, FRecord ys ->
-      List.fold_right2 (fun (_, xs) (_, ys) acc -> fold_right2 f xs ys acc) xs ys acc
-    | FRecord _, _ -> invalid_arg "Flat.fold_right2"
-  ;;
-
   let rec map f = function
     | FTyp x -> FTyp (f x)
     | FRecord xs -> FRecord (List.map (fun (x, xs) -> x, map f xs) xs)
-  ;;
-
-  let rec map2 f xs ys =
-    match xs, ys with
-    | FTyp x, FTyp y -> FTyp (f x y)
-    | FRecord xs, FRecord ys ->
-      FRecord (List.map2 (fun (x, xs) (_, ys) -> x, map2 f xs ys) xs ys)
-    | _ -> invalid_arg "Flat.map2"
   ;;
 end
 
 module Flatten = struct
   let rec kind k =
     let rec aux acc = function
-      | S.Kind.KEmpty -> None
       | S.Kind.KType -> Some (Flat.FTyp (acc (Ex T.Kind.KType : Ex.kind)))
       | S.Kind.KArrow (k1, k2) ->
         let arrow (Ex k1 : Ex.kind) (Ex k2 : Ex.kind) : Ex.kind = Ex (KArrow (k1, k2)) in
@@ -177,21 +131,24 @@ module Env : sig
   val find_var : S.Var.t -> t -> T.Var.t
   val enter_mod : S.TVar.t -> t -> t
   val enter_field : S.Var.t -> t -> t
-  val enter_arrow : S.TVar.t -> t -> t
+  val enter_lam : S.TVar.t -> t -> t
   val add_tvar : S.TVar.t -> t -> t * Ex.tvar list
   val find_tvar : S.TVar.t -> t -> Ex.tvar Flat.t
-  val module_tvars : t -> Ex.tvar list
-  val deps : t -> Ex.kind list
+  val [@deprecated] module_tvars : t -> Ex.tvar list
 end = struct
   type t =
     { module_tvars : Ex.tvar Flat.t option
     ; vars : T.Var.t S.Var.Map.t
     ; tvars : Ex.tvar Flat.t S.TVar.Map.t
-    ; deps : Ex.kind list
+    ; path : S.TVar.t S.Path.t
     }
 
   let empty =
-    { module_tvars = None; vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; deps = [] }
+    { module_tvars = None
+    ; vars = S.Var.Map.empty
+    ; tvars = S.TVar.Map.empty
+    ; path = S.Path.empty
+    }
   ;;
 
   let add_var x env =
@@ -217,19 +174,18 @@ end = struct
   ;;
 
   let enter_mod a env =
-    { env with module_tvars = S.TVar.Map.find_opt a env.tvars; deps = [] }
+    { env with module_tvars = S.TVar.Map.find_opt a env.tvars; path = S.Path.PVar a }
   ;;
 
   let enter_field x env =
+    let env = { env with path = S.Path.PProj (env.path, x) } in
     match env.module_tvars with
     | Some (Flat.FRecord xs) -> { env with module_tvars = List.assoc_opt x xs }
     | None -> env
     | _ -> invalid_arg "Env.enter_field"
   ;;
 
-  let enter_arrow x env =
-    { env with deps = Flat.fold_right List.cons (Flatten.kind (S.TVar.kind x)) env.deps }
-  ;;
+  let enter_lam x env = { env with path = S.Path.PApp (env.path, x) }
 
   let find_tvar a env =
     match S.TVar.Map.find_opt a env.tvars with
@@ -237,13 +193,11 @@ end = struct
     | None -> Format.kasprintf failwith "unbound type variable: %a" S.TVar.pp a
   ;;
 
-  let module_tvars env =
+  let[@deprecated] module_tvars env =
     match env.module_tvars with
     | Some a -> Flat.to_list a
     | None -> []
   ;;
-
-  let deps env = env.deps
 end
 
 module Type = struct
@@ -266,8 +220,8 @@ module Type = struct
     | TArrow (_, t1, eff, t2) ->
       let a, t1 = S.Type.as_module t1 in
       let env, aks = Env.add_tvar a env in
-      let t1 = typ (Env.enter_arrow a env) t1
-      and t2 = typ (Env.enter_mod a env) t2 in
+      let t1 = typ (Env.enter_mod a env) t1
+      and t2 = typ (Env.enter_lam a env) t2 in
       let t = Sugar.Type.eff_arrow t1 eff t2 in
       List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) aks t
     | TRecord xs -> T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs)
@@ -297,7 +251,6 @@ module Type = struct
 
   and cons env c =
     let rec aux env acc = function
-      | S.Type.CEmpty -> None
       | S.Type.CType t -> Some (Flat.FTyp (acc (Ex (typ env t) : Ex.typ)))
       | S.Type.CLam (a1, c2) ->
         let lam (Ex a1 : Ex.tvar) (Ex c2 : Ex.typ) : Ex.typ = Ex (TLam (a1, c2)) in

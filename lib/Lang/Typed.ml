@@ -75,7 +75,6 @@ end
 
 module Kind = struct
   type t =
-    | KEmpty [@deprecated]
     | KType
     | KArrow of t * t
     | KRecord of (Var.t * t) List.t [@printer Format.pp_print_record Var.pp pp]
@@ -83,14 +82,23 @@ module Kind = struct
 
   type kind = t
 
+  let empty = KRecord []
   let equal = ( = )
 
-  let[@deprecated] rec is_empty = function
-    | KEmpty -> true
+  let rec is_empty = function
     | KType -> false
     | KRecord xs -> List.for_all (fun (_, k) -> is_empty k) xs
     | KArrow (_, k) -> is_empty k
   ;;
+
+  let opt k = if is_empty k then None else Some k
+
+  let opt_record = function
+    | [] -> None
+    | ks -> Some (KRecord ks)
+  ;;
+
+  let opt_arrow k1 k2 = Some (KArrow (k1, Option.value k2 ~default:empty))
 
   module Option = struct
     type nonrec t = t option
@@ -139,7 +147,7 @@ end = struct
   let equal (_, x1) (_, x2) = UID.equal x1 x2
   let compare (_, x1) (_, x2) = UID.compare x1 x2
   let pp ppf (_, x) = Format.fprintf ppf "#%d" (UID.get x)
-  let empty = fresh Kind.KEmpty
+  let empty = fresh Kind.empty
   let is_empty x = Kind.is_empty (kind x)
 
   module Set = Set.Make (struct
@@ -268,7 +276,10 @@ end = struct
   let pp pp ppf z =
     match !z with
     | Det x -> pp ppf x
-    | Undet (_, l, x) -> Format.fprintf ppf "#%d@@%d" (UID.get x) (Level.get l)
+    | Undet (s, l, x) ->
+      let pp_sep ppf () = Format.pp_print_string ppf "," in
+      let pp_scope ppf s = Format.pp_print_iter TVar.Set.iter ~pp_sep TVar.pp ppf s in
+      Format.fprintf ppf "?%d@@%d{%a}" (UID.get x) (Level.get l) pp_scope s
   ;;
 end
 
@@ -365,7 +376,6 @@ module Type = struct
   [@@deriving show]
 
   and cons =
-    | CEmpty [@deprecated]
     | CType of typ
     | CLam of TVar.t * cons
     | CRecord of (Var.t * cons) list [@printer Format.pp_print_record Var.pp pp_cons]
@@ -393,16 +403,16 @@ module Type = struct
   module Cons = struct
     type t = cons
 
+    let empty : cons option = None
+
     let rec kind = function
-      | CEmpty -> Kind.KEmpty
       | CType _ -> Kind.KType
       | CLam (x, c) -> Kind.KArrow (TVar.kind x, kind c)
       | CRecord xs -> Kind.KRecord (List.Assoc.map kind xs)
     ;;
 
-    let rec is_tvar a c =
+    let is_tvar a c =
       let rec aux = function
-        | CEmpty -> true
         | CType t ->
           (match view t with
            | TAbstr p -> TVar.equal a (Path.var p)
@@ -415,12 +425,65 @@ module Type = struct
 
     let equal = ( = )
     let pp = pp_cons
+
+    let lookup f p c =
+      let rec aux = function
+        | Path.Rev.RPNil, CType t -> Some t
+        | Path.Rev.RPNil, _ -> invalid_arg "Cons.get"
+        | Path.Rev.RPProj (r, x), CRecord xs ->
+          (match List.assoc_opt x xs with
+           | Some c -> aux (r, c)
+           | None -> None)
+        | Path.Rev.RPProj _, _ -> invalid_arg "Cons.get"
+        | Path.Rev.RPApp (r, x), CLam (a, c) -> aux (r, f a x c)
+        | Path.Rev.RPApp _, _ -> invalid_arg "Cons.get"
+      in
+      let _, r = Path.rev p in
+      aux (r, c)
+    ;;
+
+    let get p c =
+      let f a x c =
+        assert (TVar.equal a x);
+        c
+      in
+      lookup f p c
+    ;;
+
+    let mem p c = Option.is_some (lookup (fun _ _ c -> c) p c)
+
+    let set p t c =
+      let rec aux = function
+        | Path.Rev.RPNil, (None | Some (CType _)) -> CType t
+        | Path.Rev.RPNil, Some _ -> invalid_arg "Cons.set"
+        | Path.Rev.RPProj (r, x), None -> CRecord [ x, aux (r, None) ]
+        | Path.Rev.RPProj (r, x), Some (CRecord xs) ->
+          CRecord (List.Assoc.update x (fun c -> Some (aux (r, c))) xs)
+        | Path.Rev.RPProj _, _ -> invalid_arg "Cons.set"
+        | Path.Rev.RPApp (r, x), None -> CLam (x, aux (r, None))
+        | Path.Rev.RPApp (r, a), Some (CLam (x, c)) ->
+          assert (TVar.equal a x);
+          CLam (x, aux (r, Some c))
+        | Path.Rev.RPApp _, _ -> invalid_arg "Cons.set"
+      in
+      try
+        let _, r = Path.rev p in
+        aux (r, c)
+      with
+      | e ->
+        Format.eprintf
+          "Failed to set cons at path %a in cons %a@."
+          (Path.pp TVar.pp)
+          p
+          (Format.pp_print_option pp_cons)
+          c;
+        raise e
+    ;;
   end
 
   module Glue = struct
     let rec concretize a =
       let rec aux path = function
-        | Kind.KEmpty -> CEmpty
         | Kind.KType -> CType (TAbstr path |> wrap)
         | Kind.KRecord xs ->
           CRecord (List.map (fun (x, k) -> x, aux (Path.PProj (path, x)) k) xs)
@@ -432,7 +495,6 @@ module Type = struct
     ;;
 
     let path_to_cons_path = Path.map concretize
-    let intro_to_singleton p = wrap (TSingleton (wrap (TAbstr (path_to_cons_path p))))
   end
   [@@deprecated]
 
@@ -464,7 +526,6 @@ module Type = struct
       | Path.PApp (p, t) -> path env p && cons env t
       | Path.PProj (p, _) -> path env p
     and cons env = function
-      | CEmpty -> true
       | CType t -> typ env t
       | CLam (_, t) -> cons env t
       | CRecord xs -> List.for_all (fun (_, t) -> cons env t) xs
@@ -504,7 +565,6 @@ module Type = struct
       | Path.PApp (p, c) -> path env p && cons env c
       | Path.PProj (p, _) -> path env p
     and cons env = function
-      | CEmpty -> true
       | CType t -> typ env t
       | CLam (a, t) -> cons (TVar.Set.add a env) t
       | CRecord ts -> List.for_all (fun (_, t) -> cons env t) ts
@@ -551,7 +611,6 @@ module Subst = struct
       TMod (a, typ ~rename f t) |> Type.wrap
 
   and cons ?(rename = TVar.Map.empty) f = function
-    | CEmpty -> CEmpty
     | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons ~rename f t) xs)
     | CLam (a, t) -> freshen a rename |> fun (a, rename) -> CLam (a, cons ~rename f t)
     | CType t -> CType (typ ~rename f t)
@@ -560,35 +619,21 @@ module Subst = struct
     let a, r = Path.rev_map (cons ~rename f) p in
     match TVar.Map.find_opt a rename with
     | Some a -> TAbstr (Path.Rev.rev a r) |> Type.wrap
-    | None -> f (Path.Rev.rev a r)
+    | None ->
+      (match f (Path.Rev.rev a r) with
+       | Some t -> t
+       | None -> TAbstr (Path.Rev.rev a r) |> Type.wrap)
   ;;
 
-  let id p = TAbstr p |> Type.wrap
+  let id _ = None
 
-  let rec one a t p =
-    let rec aux = function
-      | PVar a' -> if TVar.equal a' a then Some t else None
-      | PProj (p, x) ->
-        (match aux p with
-         | Some (CRecord xs) ->
-           (match List.assoc_opt x xs with
-            | Some c -> Some c
-            | None -> None)
-         | None -> None
-         | _ -> assert false)
-      | PApp (p, c) ->
-        (match aux p with
-         | Some (CLam (a', c')) ->
-           assert (Kind.equal (TVar.kind a') (Type.Cons.kind c));
-           Some (cons (one a' c) c')
-         | None -> None
-         | _ -> assert false)
-    in
-    match aux p with
-    | Some (CType t) -> t
-    | None -> TAbstr p |> Type.wrap
-    | _ -> assert false
+  let rec one a c p =
+    if TVar.equal (Path.var p) a
+    then Type.Cons.lookup (fun a t c -> cons (one a t) c) p c
+    else None
   ;;
+
+  let one_opt a = Option.fold ~none:id ~some:(one a)
 end
 
 module Equal = struct
@@ -619,8 +664,6 @@ module Equal = struct
 
   and cons c' c =
     match c', c with
-    | CEmpty, CEmpty -> true
-    | CEmpty, _ -> false
     | CType t', CType t -> typ t t'
     | CType _, _ -> false
     | CLam (a', c'), CLam (a, c) -> cons (rename Subst.cons a' a c') c
@@ -629,81 +672,6 @@ module Equal = struct
       List.equal (fun (x', c') (x, c) -> Var.equal x' x && cons c' c) ts' ts
     | CRecord _, _ -> false
   ;;
-end
-
-module Zipper : sig
-  type t
-
-  val empty : t
-  val of_path : TVar.t Path.t -> t
-  val path : TVar.t -> t -> TVar.t Path.t
-  val lam : TVar.t -> t -> t
-  val field : Var.t -> t -> t
-  val set : Type.typ -> t -> t
-  val up : t -> t
-  val get : t -> Type.cons
-  val finish : t -> Type.cons
-  val subst : TVar.t -> t -> Type.cons Path.t -> Type.typ
-  val pp : Format.formatter -> t -> unit
-end = struct
-  type trace =
-    | TRecord of Var.t * (Var.t * Type.cons) list
-    | TLam of TVar.t
-
-  type t = trace list * Type.cons option
-
-  let empty = [], None
-
-  let lam a = function
-    | z, (None | Some (Type.CLam _)) -> TLam a :: z, None
-    | _, Some _ -> invalid_arg "Zipper.lam"
-  ;;
-
-  let field x = function
-    | z, None -> TRecord (x, []) :: z, None
-    | z, Some (Type.CRecord xs) -> TRecord (x, List.rev xs) :: z, None
-    | _, Some _ -> invalid_arg "Zipper.record"
-  ;;
-
-  let set t (z, _) = z, Some (Type.CType t)
-
-  let rec of_path = function
-    | Path.PVar _ -> empty
-    | Path.PProj (p, x) -> field x (of_path p)
-    | Path.PApp (p, a) -> lam a (of_path p)
-  ;;
-
-  let path a (z, _) =
-    let rec aux = function
-      | [] -> Path.PVar a
-      | TRecord (x, _) :: zs -> Path.PProj (aux zs, x)
-      | TLam a :: zs -> Path.PApp (aux zs, a)
-    in
-    aux z
-  ;;
-
-  let up = function
-    | TRecord (x, xs) :: ts, Some c -> ts, Some (Type.CRecord (List.rev ((x, c) :: xs)))
-    | TRecord (_, xs) :: ts, None ->
-      ts, Some (Type.CRecord (List.rev xs)) (* TODO: remove? *)
-    | TLam a :: ts, Some c -> ts, Some (Type.CLam (a, c))
-    | TLam _ :: ts, None -> ts, None (* TODO: remove? *)
-    | [], _ -> invalid_arg "Zipper.up"
-  ;;
-
-  let get = function
-    | _, Some c -> c
-    | _, None -> Type.CEmpty
-  ;;
-
-  let rec finish = function
-    | [], Some c -> c
-    | [], None -> Type.CEmpty
-    | z -> finish (up z)
-  ;;
-
-  let subst a z = Subst.one a (finish z)
-  let pp ppf x = Type.Cons.pp ppf (finish x)
 end
 
 module Expr = struct
