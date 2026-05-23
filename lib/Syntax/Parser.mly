@@ -206,8 +206,8 @@ bind:
   | x=var ps=param+ rs=bind_fun_annot* "=" e=expr
     { [ Sugar.bind_fun ~span:$loc x ps rs e ] }
 
-  | "type" x=var ps=typ_param* "=" t=typ { [ Sugar.bind_typ ~span:$loc x ps (Sugar.as_typ t) ] }
-  | "do"   e=expr                        { [ Sugar.bind_do  ~span:$loc e ] }
+  | "type" x=var ps=typ_param* "=" t=typ { Sugar.bind_typ ~span:$loc x ps (Sugar.as_typ t) }
+  | "do"   e=expr                        { Sugar.bind_do  ~span:$loc e }
 ;
 
 bind_fun_annot:

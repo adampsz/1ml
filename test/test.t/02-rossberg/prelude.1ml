@@ -1,5 +1,7 @@
 (* @prelude *)
 
+ignore (x: _) = ();
+
 (* Fun *)
 
 Fun =

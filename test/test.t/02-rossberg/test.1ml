@@ -2,7 +2,9 @@
 
 log = {
     type text = extern "string";
-    log s = (extern "Text.print": text -> ()) ((extern "Text.++": text -> text -> text) s "\n");
+    print = extern "Text.print": text -> ();
+    (++) = extern "Text.++": text -> text -> text;
+    log s = print (s ++ "\n");
 }.log;
 
 do log "Bool";
@@ -14,7 +16,7 @@ Bool =
   true = extern "Bool.true": bool;
   false = extern "Bool.false": bool;
   not b = if b then false else true;
-  print b = extern "Bool.print": bool -> ();
+  print = extern "Bool.print": bool -> ();
 };
 type bool = Bool.t;
 true = Bool.true;

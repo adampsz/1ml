@@ -40,5 +40,5 @@ do Assert.eq (true || true) true;
 do Assert.eq (false && true || true) true;
 
 fail _ = let _ = Assert.ok false in true;
-do true || fail ();
-do false && fail ();
+_ = (true || fail ());
+_ = (false && fail ());

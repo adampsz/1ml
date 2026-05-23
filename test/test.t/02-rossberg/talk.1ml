@@ -103,8 +103,8 @@ type MONAD (m : type => type) =
 map 'a 'b (m : type => type) (M : MONAD m) (f : a -> b) mx =
   M.bind mx (fun x => M.return (f x));
 
-do map :
-  'a => 'b => (m : type => type) => (M : MONAD m) => (a -> b) -> m a -> m b;
+_ : 'a => 'b => (m : type => type) => (M : MONAD m) => (a -> b) -> m a -> m b
+  = map;
 
 
 (* Objects *)

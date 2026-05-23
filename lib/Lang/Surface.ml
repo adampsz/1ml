@@ -266,7 +266,7 @@ module Sugar = struct
     | _ -> failwith "todo unknown type"
   ;;
 
-  let bind_typ ?span id ps t = BVal (id, typ_fun ps t) @@ span
+  let bind_typ ?span id ps t = [ BVal (id, typ_fun ps t) @@ span ]
 
   let bind_fun ?span x ps rs e =
     BVal (x, expr_fun ?span ps (List.fold_left (fun e a -> a e) e rs)) @@ span
@@ -277,7 +277,10 @@ module Sugar = struct
     (BVal (x, e) @@ span) :: bs
   ;;
 
-  let bind_do ?span e = BVal (ident (Node.span e), e) @@ span
+  let bind_do ?span e =
+    let x = ident (Node.span e) in
+    [ BVal (x, e) @@ span; BVal (x, ESeal (x, TPrim PUnit @@ span) @@ span) @@ span ]
+  ;;
 
   let decl_id ?span id ps t =
     let f (p, i) acc =
