@@ -16,7 +16,14 @@ let parse_file path =
   Syntax.parse lexbuf
 ;;
 
+let parse_string ~filename source =
+  let lexbuf = Lexing.from_string source in
+  Lexing.set_filename lexbuf filename;
+  Syntax.parse lexbuf
+;;
+
 let add name path t = Entry (name, parse_file path) :: t
+let add_parsed name file t = Entry (name, file) :: t
 let prelude name t = Prelude name :: t
 
 let get t =

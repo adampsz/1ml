@@ -17,10 +17,31 @@ let file inputs =
     OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read err
 ;;
 
-let rec repl () =
-  let cmd = Repl.read () in
-  Repl.eval cmd;
-  repl ()
+let load_prelude path =
+  let file = OneMl.Pipeline.parse_file path in
+  OneMl.Lang.Surface.Node.data file
+;;
+
+let repl () =
+  let initial =
+    match Args.prelude with
+    | None -> []
+    | Some path ->
+      (try load_prelude path with
+       | OneMl.Diagnostic.Error.Error err ->
+         OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read err;
+         [])
+  in
+  let session = ref initial in
+  Printf.printf "1ml prototype REPL. Type #help for commands, #exit to quit.\n%!";
+  while true do
+    try
+      let cmd = Repl.read () in
+      session := Repl.eval ~fomega:Args.fomega !session cmd
+    with
+    | OneMl.Diagnostic.Error.Error err ->
+      OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read err
+  done
 ;;
 
 let _ =

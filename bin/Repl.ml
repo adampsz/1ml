@@ -1,52 +1,89 @@
+open OneMl
+module S = Lang.Surface
+
+type session = S.bind list
+
 type cmd =
-  | CEval of unit
+  | CEval of S.bind list
   | CHelp
   | CExit
-  | CCd of string
 
 let help =
-  "Available commands:\n\n\
-   #help     - Display this help\n\
-   #exit     - Exit interactive session\n\
-   #cd \"dir\" - Change directory\n"
+  "Available commands:\n  #help - Display this help\n  #exit - Exit interactive session\n"
 ;;
 
-(* let lex lexbuf =
-  let rec aux acc lexbuf =
-    match OneMl.Lexer.token lexbuf with
-    | EOF -> List.rev acc
-    | t -> aux (t :: acc) lexbuf
+let prompt p =
+  print_string p;
+  flush stdout;
+  input_line stdin
+;;
+
+let read_command line =
+  let trimmed = String.trim line in
+  let body = String.sub trimmed 1 (String.length trimmed - 1) in
+  match String.split_on_char ' ' body |> List.filter (fun s -> s <> "") with
+  | [] | [ "help" ] -> CHelp
+  | [ "exit" ] -> CExit
+  | _ -> Diagnostic.Error.error "unknown REPL command: %s" body
+;;
+
+let error_at_eof source diag =
+  match Diagnostic.span diag with
+  | None -> false
+  | Some (p, _) -> p.Lexing.pos_cnum >= Buffer.length source
+;;
+
+let read_code line =
+  let rec loop buf =
+    match Pipeline.parse_string ~filename:"<stdin>" (Buffer.contents buf) with
+    | file -> CEval (Lang.Surface.Node.data file)
+    | exception Diagnostic.Error.Error diag when error_at_eof buf diag ->
+      (match prompt "..> " with
+       | line ->
+         Buffer.add_string buf line;
+         Buffer.add_char buf '\n';
+         loop buf
+       | exception End_of_file ->
+         print_newline ();
+         Diagnostic.print ~read:Diagnostic.read diag;
+         CEval [])
+    | exception Diagnostic.Error.Error diag ->
+      Diagnostic.print ~read:Diagnostic.read diag;
+      CEval []
   in
-  aux [] lexbuf
+  let buf = Buffer.create 64 in
+  Buffer.add_string buf line;
+  Buffer.add_char buf '\n';
+  loop buf
 ;;
-
-let read_cmd line =
-  let start = String.index line '#' + 1 in
-  let lexbuf = Lexing.from_string (String.sub line start (String.length line - start)) in
-  Lexing.set_filename lexbuf "<repl>";
-  Lexing.set_position lexbuf { lexbuf.lex_curr_p with pos_cnum = start };
-  match lex lexbuf with
-  | [ ID "help" ] -> CHelp
-  | [ ID "exit" ] -> CExit
-  | [ ID "cd"; STRING dir ] -> CCd dir
-  | _ -> failwith "unknown command"
-;; *)
-
-let read_code line = failwith "todo"
 
 let read () =
-  Printf.printf "1ml> %!";
-  let line = read_line () in
-  failwith "todo"
+  match prompt "1ml> " with
+  | line ->
+    let trimmed = String.trim line in
+    if String.starts_with ~prefix:"#" trimmed then read_command line else read_code line
+  | exception End_of_file ->
+    print_newline ();
+    CExit
 ;;
 
-(* if String.trim line |> String.starts_with ~prefix:"#"
-  then read_cmd line
-  else read_code line *)
+let eval_binds ~fomega session new_binds =
+  let combined = session @ new_binds in
+  let file = Lang.Surface.Node.make combined in
+  let typed = Pipeline.typecheck file in
+  if fomega then Pipeline.eval_fomega typed else Pipeline.eval typed;
+  combined
+;;
 
-let eval = function
-  | CCd dir -> Sys.chdir dir
+let eval ~fomega session = function
   | CExit -> exit 0
-  | CHelp -> Printf.printf "\n%s\n" help
-  | CEval prog -> Printf.eprintf "TODO\n"
+  | CHelp ->
+    print_string help;
+    flush stdout;
+    session
+  | CEval binds ->
+    (try eval_binds ~fomega session binds with
+     | Diagnostic.Error.Error diag ->
+       Diagnostic.print ~read:Diagnostic.read diag;
+       session)
 ;;
