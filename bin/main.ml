@@ -13,7 +13,8 @@ let file inputs =
     let expr = OneMl.Pipeline.typecheck expr in
     if Args.fomega then OneMl.Pipeline.eval_fomega expr else OneMl.Pipeline.eval expr
   with
-  | OneMl.Diagnostic.Error.Error err -> OneMl.Diagnostic.print err
+  | OneMl.Diagnostic.Error.Error err ->
+    OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read err
 ;;
 
 let rec repl () =

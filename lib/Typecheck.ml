@@ -102,6 +102,11 @@ module Error = struct
   let implicit_must_be_pure ?span () = error ?span "implicit function cannot be impure"
 
   let not_assignable ?span ?cause env t' t =
+    let span =
+      match span, T.Type.span t, T.Type.span t' with
+      | Some span, _, _ | _, Some span, _ | _, _, Some span -> Some span
+      | _, _, _ -> None
+    in
     let raise = error ?span ?cause "@[type `%a'@ is not assignable to `%a'@]" in
     raise (pp_typ env) t' (pp_typ env) t
   ;;
