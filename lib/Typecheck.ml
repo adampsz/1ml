@@ -717,7 +717,10 @@ module Session = struct
     ; es : T.Expr.bind list
     }
 
-  let empty = { env = Env.empty; eff = Pure; ks = []; ts = []; es = [] }
+  let empty =
+    let a, _ = T.TVar.defer () in
+    { env = Env.enter_mod a Env.empty; eff = Pure; ks = []; ts = []; es = [] }
+  ;;
 
   let next state input =
     let env, xs = List.fold_left_map Check.bind state.env (S.Node.data input) in

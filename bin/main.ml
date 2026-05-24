@@ -1,17 +1,18 @@
 open OneMl
 
+let read = function
+  | "-" ->
+    let lexbuf = Lexing.from_channel stdin in
+    Lexing.set_filename lexbuf "-";
+    Syntax.parse lexbuf |> Lang.Surface.Node.data
+  | path -> Syntax.parse_file path |> Lang.Surface.Node.data
+;;
+
 let read_files ?prelude inputs =
   let open Lang.Surface in
-  let wrap path =
-    Node.map (fun file -> BVal (Node.make path, Node.make (EStruct file)))
-  in
-  let prelude =
-    match prelude with
-    | Some path -> Syntax.parse_file path |> Lang.Surface.Node.data
-    | None -> []
-  in
-  let files = List.map (fun path -> Syntax.parse_file path |> wrap path) inputs in
-  Node.make (prelude @ files)
+  let prelude = Option.fold ~none:[] ~some:read prelude in
+  let file path = Node.make (BVal (Node.make path, Node.make (EStruct (read path)))) in
+  Node.make (prelude @ List.map file inputs)
 ;;
 
 let run_fomega expr =
@@ -38,6 +39,18 @@ let rec repl state =
   repl (Repl.eval state cmd)
 ;;
 
+let load_prelude path state = Repl.State.next (Syntax.parse_file path) state
+
+let init_repl () =
+  match Args.prelude with
+  | None -> Repl.State.empty
+  | Some path ->
+    (try load_prelude path Repl.State.empty with
+     | Diagnostic.Error.Error diag ->
+       Diagnostic.print ~read:Diagnostic.read diag;
+       exit 1)
+;;
+
 let _ =
   OneMl.Diagnostic.Color.enable Args.color;
   let reporter = Logs.format_reporter () in
@@ -51,6 +64,6 @@ let _ =
   in
   Logs.set_reporter reporter;
   match Args.mode with
-  | Repl -> repl Repl.State.empty
+  | Repl -> repl (init_repl ())
   | Run inputs -> file inputs
 ;;
