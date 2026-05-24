@@ -171,11 +171,59 @@ module Eval = struct
     | _ -> assert false
   ;;
 
+  let lookup x vs =
+    match List.find_opt (fun (y, _) -> L.Var.equal x y) vs with
+    | Some (_, v) -> v
+    | None -> assert false
+  ;;
+
   let rec eval env expr =
     trace
       (fun m -> m ~header:"eval" "%a" L.Expr.pp expr)
       (fun r m -> m ~header:"eval" "= %a" Value.pp r)
-    @@ fun () -> failwith "todo"
+    @@ fun () ->
+    match expr with
+    | L.Expr.EVar x -> Env.find x env
+    | L.Expr.EConst c -> Value.VConst c
+    | L.Expr.ECond (x, e1, e2, _) ->
+      (match Env.find x env with
+       | Value.VConst (CBool true) -> eval env e1
+       | Value.VConst (CBool false) -> eval env e2
+       | _ -> assert false)
+    | L.Expr.EStruct (binds, ts) ->
+      let env = List.fold_left bind env binds in
+      Value.VRecord (List.map (fun (x, _) -> x, Env.find x env) ts)
+    | L.Expr.EProj (e, x, _) ->
+      (match eval env e with
+       | Value.VRecord vs -> lookup x vs
+       | _ -> assert false)
+    | L.Expr.EFun (x, _, _, body) ->
+      Value.VFunction (fun v -> eval (Env.add x v env) body)
+    | L.Expr.EApp (e1, _, _, e2) ->
+      (match eval env e1 with
+       | Value.VFunction f -> f (eval env e2)
+       | _ -> assert false)
+    | L.Expr.EType _ -> Value.VSingleton
+    | L.Expr.EExtern (s, t) ->
+      (match Env.extern s env with
+       | Some v -> v
+       | None -> materialize t)
+    | L.Expr.EWrap (e, _) -> Value.VWrapped (eval env e)
+    | L.Expr.EUnwrap e ->
+      (match eval env e with
+       | Value.VWrapped v -> v
+       | _ -> assert false)
+    | L.Expr.ESeal (e, _, _) -> eval env e
+    | L.Expr.EMod (_, e) -> eval env e
+    | L.Expr.EUse e -> eval env e
+
+  and bind env = function
+    | L.Expr.BVal (x, e) -> Env.add x (eval env e) env
+    | L.Expr.BIncl (_, e, ts) ->
+      (match eval env e with
+       | Value.VRecord vs ->
+         List.fold_left (fun env (x, _) -> Env.add x (lookup x vs) env) env ts
+       | _ -> assert false)
   ;;
 
   let modu env (L.Expr.EMod (_, e)) = eval env e
