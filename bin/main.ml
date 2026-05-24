@@ -1,10 +1,7 @@
 open OneMl
 
 let read = function
-  | "-" ->
-    let lexbuf = Lexing.from_channel stdin in
-    Lexing.set_filename lexbuf "-";
-    Syntax.parse lexbuf |> Lang.Surface.Node.data
+  | "-" -> Syntax.parse_stdin () |> Lang.Surface.Node.data
   | path -> Syntax.parse_file path |> Lang.Surface.Node.data
 ;;
 
@@ -41,7 +38,7 @@ let rec repl state =
   repl (Repl.eval state cmd)
 ;;
 
-let load_prelude path state = Repl.State.next (Syntax.parse_file path) state
+let load_prelude path state = fst (Repl.State.next (Syntax.parse_file path) state)
 
 let init_repl () =
   match Args.prelude with

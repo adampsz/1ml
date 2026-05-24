@@ -1,8 +1,10 @@
 open OneMl
 module S = Lang.Surface
+module T = Lang.Typed
 
 type cmd =
   | CEval of string * S.bind list S.Node.t
+  | CExpr of string * S.expr
   | CHelp
   | CExit
 
@@ -35,11 +37,27 @@ module State = struct
   ;;
 
   let next xs state =
-    let typecheck, es, _ = OneMl.Typecheck.Session.next state.typecheck xs in
+    let typecheck, es, ts = OneMl.Typecheck.Session.next state.typecheck xs in
     let eval = OneMl.Eval.Session.next state.eval es in
-    { state with typecheck; eval }
+    { state with typecheck; eval }, ts
+  ;;
+
+  let pretty_env state =
+    List.fold_left
+      (fun env (x, t) -> Pretty.Env.add_var x t env)
+      Pretty.Env.empty
+      state.typecheck.ts
   ;;
 end
+
+let it_name = "it"
+
+let wrap_expr_as_bind expr =
+  let span = S.Node.span expr in
+  let it = S.Node.make ?span it_name in
+  let bind = S.Node.make ?span (S.BVal (S.Public, it, expr)) in
+  S.Node.make ?span [ bind ]
+;;
 
 let help =
   "Available commands:\n  #help - Display this help\n  #exit - Exit interactive session\n"
@@ -66,12 +84,19 @@ let error_at_eof source diag =
   | Some (p, _) -> p.Lexing.pos_cnum >= Buffer.length source
 ;;
 
+let try_parse f source ~filename =
+  try Ok (f ~filename source) with
+  | Diagnostic.Error.Error diag -> Error diag
+;;
+
 let read_code ?filename state line =
   let rec loop buf =
     let filename = Option.value ~default:(State.filename state) filename
     and source = Buffer.contents buf in
-    match OneMl.Syntax.parse_string ~filename source with
-    | file -> State.append source state, CEval (source, file)
+    match OneMl.Syntax.parse_repl ~filename source with
+    | Left expr -> State.append source state, CExpr (source, expr)
+    | Right file ->
+      State.append source state, CEval (source, OneMl.Lang.Surface.Node.make file)
     | exception Diagnostic.Error.Error diag when error_at_eof buf diag ->
       (match prompt "..> " with
        | line ->
@@ -106,6 +131,11 @@ let read state =
     state, CExit
 ;;
 
+let print_result env t v =
+  let pf = Format.printf "@[<2> :@ %a =@ %a@]@." in
+  pf (Pretty.Print.typ ~prec:0 ~env) t Eval.Value.pp v
+;;
+
 let eval state = function
   | CExit -> exit 0
   | CHelp ->
@@ -113,7 +143,20 @@ let eval state = function
     flush stdout;
     state
   | CEval (_, xs) ->
-    (try State.next xs state with
+    (try fst (State.next xs state) with
+     | Diagnostic.Error.Error diag ->
+       Diagnostic.print ~read:(State.read state) diag;
+       state)
+  | CExpr (_, expr) ->
+    (try
+       let state, ts = State.next (wrap_expr_as_bind expr) state in
+       (match List.find_opt (fun (x, _) -> T.Var.name x = it_name) (List.rev ts) with
+        | Some (x, t) ->
+          let v = Eval.Env.find x state.eval in
+          print_result (State.pretty_env state) t v
+        | None -> ());
+       state
+     with
      | Diagnostic.Error.Error diag ->
        Diagnostic.print ~read:(State.read state) diag;
        state)
