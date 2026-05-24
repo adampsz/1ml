@@ -658,13 +658,14 @@ module Check = struct
       (fun _ m -> m ~header:"bind" "")
     @@ fun () ->
     match S.Node.data b with
-    | S.BVal (x, e) ->
+    | S.BVal (vis, x, e) ->
       let x = field x in
       let level = T.UVar.stamp () in
       let k, eff, t, e = expr (Env.enter_field x env) e in
       let gen, t = Implicit.generalize level t in
       let ks = Option.fold k ~none:[] ~some:(fun k -> [ x, k ]) in
-      Env.add x t env, (ks, eff, [ x, t ], T.Expr.BVal (x, gen e))
+      let ts = if vis = Public then [ x, t ] else [] in
+      Env.add x t env, (ks, eff, ts, T.Expr.BVal (x, gen e))
     | S.BIncl (vis, e) ->
       let span = S.Node.span e in
       let k, eff, t, e = expr env e in

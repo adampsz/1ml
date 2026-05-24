@@ -11,7 +11,9 @@ let read = function
 let read_files ?prelude inputs =
   let open Lang.Surface in
   let prelude = Option.fold ~none:[] ~some:read prelude in
-  let file path = Node.make (BVal (Node.make path, Node.make (EStruct (read path)))) in
+  let file path =
+    Node.make (BVal (Public, Node.make path, Node.make (EStruct (read path))))
+  in
   Node.make (prelude @ List.map file inputs)
 ;;
 

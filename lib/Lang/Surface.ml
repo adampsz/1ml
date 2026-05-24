@@ -59,7 +59,7 @@ and expr_data =
 and bind = bind_data Node.t
 
 and bind_data =
-  | BVal of ident * expr
+  | BVal of vis * ident * expr
   | BIncl of vis * expr
 [@@deriving show]
 
@@ -101,7 +101,7 @@ module Sugar = struct
     | EVar x -> bs, x
     | _ ->
       let x = ident (Node.span e) in
-      (BVal (x, e) @@ Node.span e) :: bs, x
+      (BVal (Private, x, e) @@ Node.span e) :: bs, x
   ;;
 
   let expr_let_in ?span bs e =
@@ -109,21 +109,21 @@ module Sugar = struct
     | [], e -> e
     | bs, e ->
       let x = ident (Node.span e) in
-      EProj (EStruct (bs @ [ BVal (x, e) @@ span ]) @@ span, x) @@ span
+      EProj (EStruct (bs @ [ BVal (Public, x, e) @@ span ]) @@ span, x) @@ span
   ;;
 
   let pat p =
     let rec aux bs e p =
       let span = Node.span p in
       match Node.data p with
-      | PId x -> (BVal (x, e) @@ Node.span x) :: bs
-      | PHole -> (BVal (ident None, e) @@ None) :: bs
+      | PId x -> (BVal (Public, x, e) @@ Node.span x) :: bs
+      | PHole -> (BVal (Private, ident None, e) @@ None) :: bs
       | PStruct ps ->
         List.fold_left (fun bs (x, p) -> aux bs (EProj (e, x) @@ Node.span p) p) bs ps
       | PAnnot (p, t) ->
         let bs, x = expr_var_bind bs e in
         let f = ident None in
-        let b = BVal (f, EFun (x, t, Explicit, EVar x @@ span) @@ span) @@ span in
+        let b = BVal (Private, f, EFun (x, t, Explicit, EVar x @@ span) @@ span) @@ span in
         aux (b :: bs) (EApp (f, x) @@ span) p
       | PSeal (p, t) ->
         let bs, x = expr_var_bind bs e in
@@ -133,11 +133,11 @@ module Sugar = struct
         aux bs (EUnwrap (x, t) @@ span) p
     in
     match Node.data p with
-    | PId x -> x, []
-    | PHole -> ident None, []
+    | PId x -> Public, x, []
+    | PHole -> Private, ident None, []
     | _ ->
       let x = ident None in
-      x, List.rev (aux [] (EVar x @@ None) p)
+      Private, x, List.rev (aux [] (EVar x @@ None) p)
   ;;
 
   let pat_param p =
@@ -157,7 +157,7 @@ module Sugar = struct
       | PWrap (p, t) -> PWrap (p, t) @@ span, t
     in
     let p, t = split p in
-    let x, bs = pat p in
+    let _, x, bs = pat p in
     x, t, bs
   ;;
 
@@ -188,7 +188,7 @@ module Sugar = struct
       and r = ident span in
       let f (acc, p) e =
         let bs, x = expr_var_bind [] e in
-        ((BVal (r, EApp (p, x) @@ span) @@ span) :: bs) @ acc, r
+        ((BVal (Public, r, EApp (p, x) @@ span) @@ span) :: bs) @ acc, r
       in
       let b, x = List.fold_left f (bs, x) es in
       EProj (EStruct (List.rev b) @@ span, x) @@ span
@@ -227,7 +227,7 @@ module Sugar = struct
   ;;
 
   let expr_tuple ?span es =
-    let f i e = BVal (Int.to_string i @@ Node.span e, e) @@ Node.span e in
+    let f i e = BVal (Public, Int.to_string i @@ Node.span e, e) @@ Node.span e in
     EStruct (List.mapi f es) @@ span
   ;;
 
@@ -266,20 +266,22 @@ module Sugar = struct
     | _ -> failwith "todo unknown type"
   ;;
 
-  let bind_typ ?span id ps t = [ BVal (id, typ_fun ps t) @@ span ]
+  let bind_typ ?span id ps t = [ BVal (Public, id, typ_fun ps t) @@ span ]
 
   let bind_fun ?span x ps rs e =
-    BVal (x, expr_fun ?span ps (List.fold_left (fun e a -> a e) e rs)) @@ span
+    BVal (Public, x, expr_fun ?span ps (List.fold_left (fun e a -> a e) e rs)) @@ span
   ;;
 
   let bind_pat ?span p e =
-    let x, bs = pat p in
-    (BVal (x, e) @@ span) :: bs
+    let vis, x, bs = pat p in
+    (BVal (vis, x, e) @@ span) :: bs
   ;;
 
   let bind_do ?span e =
     let x = ident (Node.span e) in
-    [ BVal (x, e) @@ span; BVal (x, ESeal (x, TPrim PUnit @@ span) @@ span) @@ span ]
+    [ BVal (Private, x, e) @@ span
+    ; BVal (Private, x, ESeal (x, TPrim PUnit @@ span) @@ span) @@ span
+    ]
   ;;
 
   let decl_id ?span id ps t =
