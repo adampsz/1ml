@@ -17,30 +17,35 @@ let file inputs =
     OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read err
 ;;
 
-let load_prelude path =
-  let file = OneMl.Pipeline.parse_file path in
-  OneMl.Lang.Surface.Node.data file
+let read_file path =
+  let chan = In_channel.open_text path in
+  let source = In_channel.input_all chan in
+  In_channel.close chan;
+  source
+;;
+
+let load_prelude session path =
+  try
+    let source = read_file path in
+    let file = OneMl.Pipeline.parse_string ~filename:path source in
+    OneMl.Session.cache_source session ~filename:path ~source;
+    OneMl.Session.step session ~source (OneMl.Lang.Surface.Node.data file)
+  with
+  | OneMl.Diagnostic.Error.Error err ->
+    OneMl.Diagnostic.print ~read:(OneMl.Session.read session) err
 ;;
 
 let repl () =
-  let initial =
-    match Args.prelude with
-    | None -> []
-    | Some path ->
-      (try load_prelude path with
-       | OneMl.Diagnostic.Error.Error err ->
-         OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read err;
-         [])
-  in
-  let session = ref initial in
+  let session = OneMl.Session.init ~fomega:Args.fomega () in
+  Option.iter (load_prelude session) Args.prelude;
   Printf.printf "1ml prototype REPL. Type #help for commands, #exit to quit.\n%!";
   while true do
     try
-      let cmd = Repl.read () in
-      session := Repl.eval ~fomega:Args.fomega !session cmd
+      let cmd = Repl.read session in
+      Repl.eval session cmd
     with
     | OneMl.Diagnostic.Error.Error err ->
-      OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read err
+      OneMl.Diagnostic.print ~read:(OneMl.Session.read session) err
   done
 ;;
 
