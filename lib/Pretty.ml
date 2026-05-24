@@ -99,6 +99,20 @@ module Print = struct
     else Format.pp_print_string ppf (T.Var.name x)
   ;;
 
+  let record fmt ppf = function
+    | [] -> Format.pp_print_string ppf "{ }"
+    | entries ->
+      let is_first = ref true in
+      let aux entry =
+        if !is_first then is_first := false else Format.fprintf ppf ";@ ";
+        fmt ppf entry
+      in
+      let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(";", -2, "") in
+      Format.fprintf ppf "{@[<hv 1>@;";
+      List.iter aux entries;
+      Format.fprintf ppf "%t@]}" br
+  ;;
+
   let rec abstr ~prec ~env ppf p =
     let rec aux ~prec ppf p =
       Prec.wrap prec (Prec.abstr ~prec p) ppf
@@ -153,17 +167,13 @@ module Print = struct
         | _ -> typ ~prec ~env ppf t
       in
       Format.fprintf ppf "@[<2>%a@]" (pp ~env) t
-    | TRecord [] -> Format.pp_print_string ppf "{ }"
     | TRecord ts ->
-      let aux (is_first, env) (k, v) =
-        if not is_first then Format.fprintf ppf ";@ ";
-        Format.fprintf ppf "@[<2>%a:@ %a@]" var k (typ ~prec:0 ~env) v;
-        false, Env.add_var k v env
+      let env = ref env in
+      let entry ppf (k, v) =
+        Format.fprintf ppf "@[<2>%a:@ %a@]" var k (typ ~prec:0 ~env:!env) v;
+        env := Env.add_var k v !env
       in
-      let br = Format.pp_print_custom_break ~fits:("", 1, "") ~breaks:(";", -2, "") in
-      Format.fprintf ppf "{@[<hv 1>@;";
-      List.fold_left aux (true, env) ts |> ignore;
-      Format.fprintf ppf "%t@]}" br
+      record entry ppf ts
     | TSingleton t -> Format.fprintf ppf "@[<2>(=@ %a@;<0 -2>)@]" (typ ~prec:0 ~env) t
     | TWrapped t -> Format.fprintf ppf "@[<2>wrap@ %a@]" (typ ~prec:0 ~env) t
     | TMod (a, t) -> typ ~prec ~env:(Env.add_tvar a env) ppf t

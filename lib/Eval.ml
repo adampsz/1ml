@@ -11,14 +11,22 @@ module Value = struct
     | VWrapped of t
 
   let rec pp ppf = function
-    | VConst c -> L.Const.pp ppf c
+    | VConst c ->
+      (match c with
+       | CUnit () -> Format.pp_print_string ppf "()"
+       | CBool b -> Format.pp_print_bool ppf b
+       | CInt n -> Format.pp_print_int ppf n
+       | CFloat f -> Format.pp_print_string ppf (Float.to_string f)
+       | CChar c -> Format.fprintf ppf "%C" c
+       | CString s -> Format.fprintf ppf "%S" s)
     | VRecord vs ->
-      let pp_field ppf (x, v) = Format.fprintf ppf "%s = %a" (L.Var.name x) pp v
-      and pp_sep ppf () = Format.pp_print_string ppf "; " in
-      Format.fprintf ppf "{ %a }" (Format.pp_print_list ~pp_sep pp_field) vs
-    | VFunction _ -> Format.fprintf ppf "<fun>"
-    | VSingleton -> Format.fprintf ppf "<singleton>"
-    | VWrapped v -> Format.fprintf ppf "wrap %a" pp v
+      let entry ppf (x, v) =
+        Format.fprintf ppf "@[<2>%a =@ %a@]" Pretty.Print.var x pp v
+      in
+      Pretty.Print.record entry ppf vs
+    | VFunction _ -> Format.pp_print_string ppf "<fun>"
+    | VSingleton -> Format.pp_print_string ppf "<type>"
+    | VWrapped v -> Format.fprintf ppf "@[<2>wrap@ %a@]" pp v
   ;;
 
   let rec equal v1 v2 =
