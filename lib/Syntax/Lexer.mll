@@ -59,7 +59,7 @@
         | Some lexbuf -> Some (Lexing.lexeme_start_p lexbuf, Lexing.lexeme_end_p lexbuf)
         | None -> None
       in
-      Diagnostic.Error.error ?span ~inner:Error
+      Diagnostic.Error.error ?span ~cause:Error
     ;;
 
     let unexpected_char ?lexbuf c = error ?lexbuf "unexpected char %C" c

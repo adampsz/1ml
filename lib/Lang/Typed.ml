@@ -381,16 +381,20 @@ module Type = struct
     | CRecord of (Var.t * cons) list [@printer Format.pp_print_record Var.pp pp_cons]
   [@@deriving show]
 
-  and typ = T of view
+  and typ = view Node.t [@@deriving show]
 
   type t = typ
+  type span = Node.span
 
-  let rec view = function
-    | T (TInfer x as u) -> UVar.view u (fun v -> view (T v)) x
-    | T t -> t
+  let rec view t =
+    match Node.data t with
+    | TInfer x as u -> UVar.view u (fun v -> view (Node.make v)) x
+    | data -> data
   ;;
 
-  let wrap t = T t
+  let wrap ?span v : typ = Node.make ?span v
+  let span = Node.span
+  let with_span ?span t = Node.make ?span (Node.data t)
 
   let as_module t =
     match view t with
@@ -398,7 +402,7 @@ module Type = struct
     | _ -> TVar.empty, t
   ;;
 
-  let as_type a t = if TVar.is_empty a then t else TMod (a, t) |> wrap
+  let as_type a t = if TVar.is_empty a then t else TMod (a, t) |> wrap ?span:(Node.span t)
 
   module Cons = struct
     type t = cons
@@ -594,35 +598,37 @@ module Subst = struct
   ;;
 
   let rec typ ?(rename = TVar.Map.empty) f t =
+    let span = Type.span t in
     match Type.view t with
     | TInfer _ -> t
-    | TAbstr p -> path ~rename f p
+    | TAbstr p -> path ?span ~rename f p
     | TPrim _ -> t
     | TArrow (x, t1, eff, t2) ->
       let a, t1 = as_module t1 in
       let a, rename = freshen a rename in
       let t = TArrow (x, as_type a (typ ~rename f t1), eff, typ ~rename f t2) in
-      Type.wrap t
-    | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap
-    | TSingleton t -> TSingleton (typ ~rename f t) |> Type.wrap
-    | TWrapped t -> TWrapped (typ ~rename f t) |> Type.wrap
+      Type.wrap ?span t
+    | TRecord xs ->
+      TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap ?span
+    | TSingleton t -> TSingleton (typ ~rename f t) |> Type.wrap ?span
+    | TWrapped t -> TWrapped (typ ~rename f t) |> Type.wrap ?span
     | TMod (a, t) ->
       let a, rename = freshen a rename in
-      TMod (a, typ ~rename f t) |> Type.wrap
+      TMod (a, typ ~rename f t) |> Type.wrap ?span
 
   and cons ?(rename = TVar.Map.empty) f = function
     | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons ~rename f t) xs)
     | CLam (a, t) -> freshen a rename |> fun (a, rename) -> CLam (a, cons ~rename f t)
     | CType t -> CType (typ ~rename f t)
 
-  and path ?(rename = TVar.Map.empty) f p =
+  and path ?span ?(rename = TVar.Map.empty) f p =
     let a, r = Path.rev_map (cons ~rename f) p in
     match TVar.Map.find_opt a rename with
-    | Some a -> TAbstr (Path.Rev.rev a r) |> Type.wrap
+    | Some a -> TAbstr (Path.Rev.rev a r) |> Type.wrap ?span
     | None ->
       (match f (Path.Rev.rev a r) with
        | Some t -> t
-       | None -> TAbstr (Path.Rev.rev a r) |> Type.wrap)
+       | None -> TAbstr (Path.Rev.rev a r) |> Type.wrap ?span)
   ;;
 
   let id _ = None
@@ -641,7 +647,7 @@ module Equal = struct
 
   let rec typ t' t =
     match Type.view t', Type.view t with
-    | TInfer z, t | t, TInfer z -> Type.resolve z (Type.wrap t)
+    | TInfer z, v | v, TInfer z -> Type.resolve z (Type.wrap v)
     | TAbstr p', TAbstr p -> Path.equal cons p' p
     | TAbstr _, _ -> false
     | TPrim p', TPrim p -> p' = p

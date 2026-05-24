@@ -54,12 +54,12 @@ type t =
   { severity : severity
   ; message : string
   ; span : (Lexing.position * Lexing.position) option
-  ; inner : exn option
+  ; cause : exn option
   }
 
 type diagnostic = t
 
-let make ?span ?inner severity message = { span; severity; message; inner }
+let make ?span ?cause severity message = { span; severity; message; cause }
 let error ?span fmt = Format.kasprintf (make ?span Error) fmt
 let warning ?span fmt = Format.kasprintf (make ?span Warning) fmt
 let info ?span fmt = Format.kasprintf (make ?span Info) fmt
@@ -67,16 +67,16 @@ let info ?span fmt = Format.kasprintf (make ?span Info) fmt
 module Error = struct
   exception Error of diagnostic
 
-  let raise ?span ?inner severity msg = raise (Error (make ?span ?inner severity msg))
-  let error ?span ?inner fmt = Format.kasprintf (raise ?span ?inner Error) fmt
-  let warning ?span ?inner fmt = Format.kasprintf (raise ?span ?inner Warning) fmt
-  let info ?span ?inner fmt = Format.kasprintf (raise ?span ?inner Info) fmt
+  let raise ?span ?cause severity msg = raise (Error (make ?span ?cause severity msg))
+  let error ?span ?cause fmt = Format.kasprintf (raise ?span ?cause Error) fmt
+  let warning ?span ?cause fmt = Format.kasprintf (raise ?span ?cause Warning) fmt
+  let info ?span ?cause fmt = Format.kasprintf (raise ?span ?cause Info) fmt
 end
 
 let severity { severity; _ } = severity
 let message { message; _ } = message
 let span { span; _ } = span
-let inner { inner; _ } = inner
+let cause { cause; _ } = cause
 
 let pp ?(read = Fun.const None) ppf diag =
   let open Lexing in
@@ -117,23 +117,39 @@ let pp ?(read = Fun.const None) ppf diag =
     let width n = (float_of_int n |> log10 |> int_of_float) + 1 in
     List.iteri (aux (width (min (p2.pos_lnum + 3) (List.length lines)))) lines
   in
-  let color, severity =
-    match diag.severity with
-    | Error -> "red", "Error"
-    | Warning -> "yellow", "Warning"
-    | Info -> "blue", "Info"
+  let color_of = function
+    | Error -> "red"
+    | Warning -> "yellow"
+    | Info -> "blue"
   in
-  let source =
+  let label_of = function
+    | Error -> "Error"
+    | Warning -> "Warning"
+    | Info -> "Info"
+  in
+  let source_of diag =
     match diag.span with
     | None -> None
     | Some (l, r) -> read l.pos_fname |> Option.map (fun s -> s, l, r)
   in
   let ppf = Color.wrap ppf in
-  let pp = fprintf ppf "@{<bold>%a@}%a@{<bold>@{<%s>%s@}@}: @{<bold>%s@}\n%!" in
-  let pp = pp (pp_print_option pp_span) diag.span in
-  let pp = pp (pp_print_option (pp_snippet color)) source in
-  let pp = pp color severity in
-  pp diag.message
+  let pp_head ppf diag =
+    let color, severity = color_of diag.severity, label_of diag.severity in
+    let pp = fprintf ppf "@{<bold>%a@}%a@{<bold>@{<%s>%s@}@}: @{<bold>%s@}\n" in
+    let pp = pp (pp_print_option pp_span) diag.span in
+    let pp = pp (pp_print_option (pp_snippet color)) (source_of diag) in
+    let pp = pp color severity in
+    pp diag.message
+  in
+  pp_head ppf diag;
+  let rec walk = function
+    | Some (Error.Error cause) ->
+      fprintf ppf "  %s\n" cause.message;
+      walk cause.cause
+    | _ -> ()
+  in
+  walk diag.cause;
+  pp_print_flush ppf ()
 ;;
 
 let print ?read diag =
