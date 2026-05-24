@@ -415,6 +415,18 @@ module Type = struct
       | CRecord xs -> Kind.KRecord (List.Assoc.map kind xs)
     ;;
 
+    let rec concretize f a =
+      let rec aux path = function
+        | Kind.KType -> CType (f path)
+        | Kind.KRecord xs ->
+          CRecord (List.map (fun (x, k) -> x, aux (Path.PProj (path, x)) k) xs)
+        | Kind.KArrow (k1, k2) ->
+          let a1 = TVar.fresh k1 in
+          CLam (a1, aux (Path.PApp (path, a1)) k2)
+      in
+      aux (PVar a) (TVar.kind a)
+    ;;
+
     let is_tvar a c =
       let rec aux = function
         | CType t ->
@@ -470,37 +482,14 @@ module Type = struct
           CLam (x, aux (r, Some c))
         | Path.Rev.RPApp _, _ -> invalid_arg "Cons.set"
       in
-      try
-        let _, r = Path.rev p in
-        aux (r, c)
-      with
-      | e ->
-        Format.eprintf
-          "Failed to set cons at path %a in cons %a@."
-          (Path.pp TVar.pp)
-          p
-          (Format.pp_print_option pp_cons)
-          c;
-        raise e
+      let _, r = Path.rev p in
+      aux (r, c)
     ;;
   end
 
-  module Glue = struct
-    let rec concretize a =
-      let rec aux path = function
-        | Kind.KType -> CType (TAbstr path |> wrap)
-        | Kind.KRecord xs ->
-          CRecord (List.map (fun (x, k) -> x, aux (Path.PProj (path, x)) k) xs)
-        | Kind.KArrow (k1, k2) ->
-          let a1 = TVar.fresh k1 in
-          CLam (a1, aux (Path.PApp (path, concretize a1)) k2)
-      in
-      aux (PVar a) (TVar.kind a)
-    ;;
-
-    let path_to_cons_path = Path.map concretize
-  end
-  [@@deprecated]
+  let rec path_to_abstr p =
+    Path.map (Cons.concretize (fun p -> TAbstr (path_to_abstr p) |> wrap)) p
+  ;;
 
   let pp ppf t = pp_view ppf (view t)
 

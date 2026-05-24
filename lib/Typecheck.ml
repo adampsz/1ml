@@ -393,7 +393,7 @@ module Check = struct
   let path_prepend env t =
     match view t with
     | TMod (a, t) ->
-      let f = T.Path.prepend (T.Type.Glue.path_to_cons_path (Env.path env)) in
+      let f = T.Path.prepend (T.Type.path_to_abstr (Env.path env)) in
       T.Kind.opt (T.TVar.kind a), path_map a f t, fun e -> T.Expr.EUse e
     | _ -> None, t, Fun.id
   ;;
@@ -429,7 +429,7 @@ module Check = struct
     | S.TPrim p -> None, TPrim p |> wrap ?span
     | S.THole -> None, TInfer (T.UVar.fresh (Env.domain env)) |> wrap ?span
     | S.TType ->
-      let abstr = TAbstr (T.Type.Glue.path_to_cons_path (Env.path env)) |> wrap ?span in
+      let abstr = TAbstr (T.Type.path_to_abstr (Env.path env)) |> wrap ?span in
       Some T.Kind.KType, TSingleton abstr |> wrap ?span
     | S.TExpr e ->
       let eff, ty, _ = modu_expr env e in
