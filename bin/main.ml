@@ -1,52 +1,41 @@
 open OneMl
 
+let read_files ?prelude inputs =
+  let open Lang.Surface in
+  let wrap path =
+    Node.map (fun file -> BVal (Node.make path, Node.make (EStruct file)))
+  in
+  let prelude =
+    match prelude with
+    | Some path -> Syntax.parse_file path |> Lang.Surface.Node.data
+    | None -> []
+  in
+  let files = List.map (fun path -> Syntax.parse_file path |> wrap path) inputs in
+  Node.make (prelude @ files)
+;;
+
+let run_fomega expr =
+  let extern = Eval.Extern.Compat.rossberg Eval.Extern.rossberg in
+  let expr = Elaborate.Elab.file Elaborate.Env.empty expr in
+  let _ = Lang.FOmega.Typecheck.check Lang.FOmega.Typecheck.Env.empty expr in
+  Lang.FOmega.Eval.eval (Lang.FOmega.Eval.Env.init extern) expr
+;;
+
+let run expr = Eval.Eval.eval (Eval.Env.init Eval.Extern.rossberg) expr
+
 let file inputs =
   try
-    let tree =
-      match Args.prelude with
-      | Some path ->
-        OneMl.Pipeline.prelude path (OneMl.Pipeline.add path path OneMl.Pipeline.empty)
-      | None -> OneMl.Pipeline.empty
-    in
-    let tree = List.fold_left (fun t f -> OneMl.Pipeline.add f f t) tree inputs in
-    let expr = OneMl.Pipeline.get tree in
-    let expr = OneMl.Pipeline.typecheck expr in
-    if Args.fomega then OneMl.Pipeline.eval_fomega expr else OneMl.Pipeline.eval expr
+    let expr = read_files ?prelude:Args.prelude inputs in
+    let expr = Typecheck.Check.file Typecheck.Env.empty expr in
+    if Args.fomega then ignore (run_fomega expr) else ignore (run expr)
   with
-  | OneMl.Diagnostic.Error.Error err ->
-    OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read err
+  | OneMl.Diagnostic.Error.Error diag ->
+    OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read diag
 ;;
 
-let read_file path =
-  let chan = In_channel.open_text path in
-  let source = In_channel.input_all chan in
-  In_channel.close chan;
-  source
-;;
-
-let load_prelude session path =
-  try
-    let source = read_file path in
-    let file = OneMl.Pipeline.parse_string ~filename:path source in
-    OneMl.Session.cache_source session ~filename:path ~source;
-    OneMl.Session.step session ~source (OneMl.Lang.Surface.Node.data file)
-  with
-  | OneMl.Diagnostic.Error.Error err ->
-    OneMl.Diagnostic.print ~read:(OneMl.Session.read session) err
-;;
-
-let repl () =
-  let session = OneMl.Session.init ~fomega:Args.fomega () in
-  Option.iter (load_prelude session) Args.prelude;
-  Printf.printf "1ml prototype REPL. Type #help for commands, #exit to quit.\n%!";
-  while true do
-    try
-      let cmd = Repl.read session in
-      Repl.eval session cmd
-    with
-    | OneMl.Diagnostic.Error.Error err ->
-      OneMl.Diagnostic.print ~read:(OneMl.Session.read session) err
-  done
+let rec repl state =
+  let state, cmd = Repl.read state in
+  repl (Repl.eval state cmd)
 ;;
 
 let _ =
@@ -62,6 +51,6 @@ let _ =
   in
   Logs.set_reporter reporter;
   match Args.mode with
-  | Repl -> repl ()
+  | Repl -> repl Repl.State.empty
   | Run inputs -> file inputs
 ;;

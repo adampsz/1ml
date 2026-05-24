@@ -2,9 +2,44 @@ open OneMl
 module S = Lang.Surface
 
 type cmd =
-  | CEval of { source : string; binds : S.bind list }
+  | CEval of string * S.bind list S.Node.t
   | CHelp
   | CExit
+
+module State = struct
+  type t =
+    { history : string list
+    ; typecheck : OneMl.Typecheck.Session.state
+    ; eval : OneMl.Eval.Session.state
+    }
+
+  let empty =
+    { history = []
+    ; typecheck = OneMl.Typecheck.Session.empty
+    ; eval = OneMl.Eval.Session.empty
+    }
+  ;;
+
+  let append input state = { state with history = input :: state.history }
+  let filename state = Printf.sprintf "<repl-%d>" (List.length state.history + 1)
+
+  let nth_back_opt i xs =
+    let i = List.length xs - i - 1 in
+    if i < 0 then None else List.nth_opt xs i
+  ;;
+
+  let read state file =
+    match Scanf.sscanf_opt file "<repl-%d>" (fun i -> nth_back_opt i state.history) with
+    | Some contents -> contents
+    | None -> Diagnostic.read file
+  ;;
+
+  let next xs state =
+    let typecheck, es, _ = OneMl.Typecheck.Session.next state.typecheck xs in
+    let eval = OneMl.Eval.Session.next state.eval es in
+    { state with typecheck; eval }
+  ;;
+end
 
 let help =
   "Available commands:\n  #help - Display this help\n  #exit - Exit interactive session\n"
@@ -31,12 +66,12 @@ let error_at_eof source diag =
   | Some (p, _) -> p.Lexing.pos_cnum >= Buffer.length source
 ;;
 
-let read_code session line =
-  let filename = Session.next_filename session in
+let read_code ?filename state line =
   let rec loop buf =
-    let source = Buffer.contents buf in
-    match Pipeline.parse_string ~filename source with
-    | file -> CEval { source; binds = Lang.Surface.Node.data file }
+    let filename = Option.value ~default:(State.filename state) filename
+    and source = Buffer.contents buf in
+    match OneMl.Syntax.parse_string ~filename source with
+    | file -> State.append source state, CEval (source, file)
     | exception Diagnostic.Error.Error diag when error_at_eof buf diag ->
       (match prompt "..> " with
        | line ->
@@ -45,13 +80,13 @@ let read_code session line =
          loop buf
        | exception End_of_file ->
          print_newline ();
-         Session.cache_source session ~filename ~source;
-         Diagnostic.print ~read:(Session.read session) diag;
-         CEval { source; binds = [] })
+         let state = State.append source state in
+         Diagnostic.print ~read:(State.read state) diag;
+         state, CEval (source, S.Node.make []))
     | exception Diagnostic.Error.Error diag ->
-      Session.cache_source session ~filename ~source;
-      Diagnostic.print ~read:(Session.read session) diag;
-      CEval { source; binds = [] }
+      let state = State.append source state in
+      Diagnostic.print ~read:(State.read state) diag;
+      state, CEval (source, S.Node.make [])
   in
   let buf = Buffer.create 64 in
   Buffer.add_string buf line;
@@ -59,28 +94,27 @@ let read_code session line =
   loop buf
 ;;
 
-let read session =
+let read state =
   match prompt "1ml> " with
   | line ->
     let trimmed = String.trim line in
     if String.starts_with ~prefix:"#" trimmed
-    then read_command line
-    else read_code session line
+    then state, read_command line
+    else read_code state line
   | exception End_of_file ->
     print_newline ();
-    CExit
+    state, CExit
 ;;
 
-let eval session = function
+let eval state = function
   | CExit -> exit 0
   | CHelp ->
     print_string help;
-    flush stdout
-  | CEval { source; binds = [] } ->
-    (* Either empty input or already-handled parse error; nothing to step. *)
-    ignore source
-  | CEval { source; binds } ->
-    (try Session.step session ~source binds with
+    flush stdout;
+    state
+  | CEval (_, xs) ->
+    (try State.next xs state with
      | Diagnostic.Error.Error diag ->
-       Diagnostic.print ~read:(Session.read session) diag)
+       Diagnostic.print ~read:(State.read state) diag;
+       state)
 ;;

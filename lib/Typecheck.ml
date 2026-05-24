@@ -707,3 +707,32 @@ module Check = struct
     e
   ;;
 end
+
+module Session = struct
+  type state =
+    { env : Env.t
+    ; eff : T.Effect.t
+    ; ks : (T.Var.t * T.Kind.t) list
+    ; ts : (T.Var.t * T.Type.t) list
+    ; es : T.Expr.bind list
+    }
+
+  let empty = { env = Env.empty; eff = Pure; ks = []; ts = []; es = [] }
+
+  let next state input =
+    let env, xs = List.fold_left_map Check.bind state.env (S.Node.data input) in
+    let ks = List.concat_map (fun (ks, _, _, _) -> ks) xs
+    and eff = List.fold_left (fun a (_, eff, _, _) -> T.Effect.join a eff) Pure xs
+    and ts = List.concat_map (fun (_, _, ts, _) -> ts) xs |> T.Var.normalize
+    and es = List.map (fun (_, _, _, b) -> b) xs in
+    let state =
+      { env
+      ; ks = state.ks @ ks
+      ; eff = T.Effect.join state.eff eff
+      ; ts = state.ts @ ts
+      ; es = state.es @ es
+      }
+    in
+    state, es, ts
+  ;;
+end

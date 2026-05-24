@@ -94,7 +94,7 @@ module Extern = struct
     | "Fun.bot" -> Some (Value.VFunction (fun _ -> assert false))
     | "Bool.true" -> Some (Value.VConst (CBool true))
     | "Bool.false" -> Some (Value.VConst (CBool false))
-    | "Bool.print" -> unary (fun x -> of_unit (Format.printf "%b" (to_bool x)))
+    | "Bool.print" -> unary (fun x -> of_unit (Format.printf "%b%!" (to_bool x)))
     | "Int.+" -> binary (fun x1 x2 -> of_int (to_int x1 + to_int x2))
     | "Int.-" -> binary (fun x1 x2 -> of_int (to_int x1 - to_int x2))
     | "Int.*" -> binary (fun x1 x2 -> of_int (to_int x1 * to_int x2))
@@ -105,10 +105,10 @@ module Extern = struct
     | "Int.>" -> binary (fun x1 x2 -> of_bool (to_int x1 > to_int x2))
     | "Int.<=" -> binary (fun x1 x2 -> of_bool (to_int x1 <= to_int x2))
     | "Int.>=" -> binary (fun x1 x2 -> of_bool (to_int x1 >= to_int x2))
-    | "Int.print" -> unary (fun x -> of_unit (Format.printf "%d" (to_int x)))
+    | "Int.print" -> unary (fun x -> of_unit (Format.printf "%d%!" (to_int x)))
     | "Char.toInt" -> unary (fun x -> of_int (Char.code (to_char x)))
     | "Char.fromInt" -> unary (fun x -> of_char (Char.chr (to_int x)))
-    | "Char.print" -> unary (fun x -> of_unit (Format.printf "%c" (to_char x)))
+    | "Char.print" -> unary (fun x -> of_unit (Format.printf "%c%!" (to_char x)))
     | "Text.++" -> binary (fun x1 x2 -> of_string (to_string x1 ^ to_string x2))
     | "Text.<" -> binary (fun x1 x2 -> of_bool (to_string x1 < to_string x2))
     | "Text.>" -> binary (fun x1 x2 -> of_bool (to_string x1 > to_string x2))
@@ -118,7 +118,7 @@ module Extern = struct
     | "Text.sub" ->
       ternary (fun i j x -> of_string (String.sub (to_string x) (to_int i) (to_int j)))
     | "Text.fromChar" -> unary (fun x -> of_string (String.make 1 (to_char x)))
-    | "Text.print" -> unary (fun x -> of_unit (Format.printf "%s" (to_string x)))
+    | "Text.print" -> unary (fun x -> of_unit (Format.printf "%s%!" (to_string x)))
     | "Assert.ok" -> unary (fun x -> of_unit (assert (to_bool x)))
     | "Assert.eq" -> binary (fun x1 x2 -> of_unit (assert_eq x1 x2))
     | _ -> None
@@ -161,16 +161,6 @@ module Extern = struct
 end
 
 module Eval = struct
-  let rec materialize t =
-    match L.Type.view t with
-    | L.Type.TPrim PUnit -> Value.VConst (CUnit ())
-    | L.Type.TArrow (_, _, _, t) -> Value.VFunction (fun _ -> materialize t)
-    | L.Type.TRecord ts -> Value.VRecord (List.map (fun (x, t) -> x, materialize t) ts)
-    | L.Type.TSingleton _ -> VSingleton
-    | L.Type.TWrapped t -> VWrapped (materialize t)
-    | _ -> assert false
-  ;;
-
   let lookup x vs =
     match List.find_opt (fun (y, _) -> L.Var.equal x y) vs with
     | Some (_, v) -> v
@@ -204,10 +194,10 @@ module Eval = struct
        | Value.VFunction f -> f (eval env e2)
        | _ -> assert false)
     | L.Expr.EType _ -> Value.VSingleton
-    | L.Expr.EExtern (s, t) ->
+    | L.Expr.EExtern (s, _) ->
       (match Env.extern s env with
        | Some v -> v
-       | None -> materialize t)
+       | None -> assert false)
     | L.Expr.EWrap (e, _) -> Value.VWrapped (eval env e)
     | L.Expr.EUnwrap e ->
       (match eval env e with
@@ -227,4 +217,11 @@ module Eval = struct
   ;;
 
   let modu env (L.Expr.EMod (_, e)) = eval env e
+end
+
+module Session = struct
+  type state = Env.t
+
+  let empty = Env.init Extern.rossberg
+  let next state es = List.fold_left Eval.bind state es
 end

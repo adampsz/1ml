@@ -71,7 +71,14 @@ let mode =
   | files, false -> Run (List.rev files)
 ;;
 
-let fomega = !fomega
+let fomega =
+  match mode with
+  | Repl when !fomega ->
+    Printf.eprintf "Cannot run REPL in F-omega mode";
+    exit 1
+  | _ -> !fomega
+;;
+
 let prelude = !prelude
 let trace = !trace
 
