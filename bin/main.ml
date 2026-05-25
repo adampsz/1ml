@@ -1,17 +1,17 @@
 open OneMl
 
 let read = function
-  | "-" -> Syntax.parse_stdin () |> Lang.Surface.Node.data
-  | path -> Syntax.parse_file path |> Lang.Surface.Node.data
+  | "-" -> Syntax.parse_stdin ()
+  | path -> Syntax.parse_file path
 ;;
 
-let read_files ?prelude inputs =
+let read_files ?prelude inputs : Lang.Surface.file =
   let open Lang.Surface in
   let prelude = Option.fold ~none:[] ~some:read prelude in
   let file path =
     Node.make (BVal (Public, Node.make path, Node.make (EStruct (read path))))
   in
-  Node.make (prelude @ List.map file inputs)
+  prelude @ List.map file inputs
 ;;
 
 let run_fomega expr =

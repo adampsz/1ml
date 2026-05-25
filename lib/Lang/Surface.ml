@@ -63,8 +63,7 @@ and bind_data =
   | BIncl of vis * expr
 [@@deriving show]
 
-type file = file_data Node.t
-and file_data = bind list
+type file = bind list
 
 module Sugar = struct
   let ( @@ ) data span = Node.make ?span data

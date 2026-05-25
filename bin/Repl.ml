@@ -3,7 +3,7 @@ module S = Lang.Surface
 module T = Lang.Typed
 
 type cmd =
-  | CEval of string * S.bind list S.Node.t
+  | CEval of string * S.file
   | CExpr of string * S.expr
   | CHelp
   | CExit
@@ -42,7 +42,7 @@ module State = struct
     { state with typecheck; eval }, ts
   ;;
 
-  let pretty_env state =
+  let for_pp state =
     List.fold_left
       (fun env (x, t) -> Pretty.Env.add_var x t env)
       Pretty.Env.empty
@@ -50,13 +50,10 @@ module State = struct
   ;;
 end
 
-let it_name = "it"
-
-let wrap_expr_as_bind expr =
+let expr_as_file expr =
   let span = S.Node.span expr in
-  let it = S.Node.make ?span it_name in
-  let bind = S.Node.make ?span (S.BVal (S.Public, it, expr)) in
-  S.Node.make ?span [ bind ]
+  let it = S.Node.make ?span "#res" in
+  [ S.Node.make ?span (S.BVal (Public, it, expr)) ]
 ;;
 
 let help =
@@ -95,8 +92,7 @@ let read_code ?filename state line =
     and source = Buffer.contents buf in
     match OneMl.Syntax.parse_repl ~filename source with
     | Left expr -> State.append source state, CExpr (source, expr)
-    | Right file ->
-      State.append source state, CEval (source, OneMl.Lang.Surface.Node.make file)
+    | Right file -> State.append source state, CEval (source, file)
     | exception Diagnostic.Error.Error diag when error_at_eof buf diag ->
       (match prompt "..> " with
        | line ->
@@ -107,11 +103,11 @@ let read_code ?filename state line =
          print_newline ();
          let state = State.append source state in
          Diagnostic.print ~read:(State.read state) diag;
-         state, CEval (source, S.Node.make []))
+         state, CEval (source, []))
     | exception Diagnostic.Error.Error diag ->
       let state = State.append source state in
       Diagnostic.print ~read:(State.read state) diag;
-      state, CEval (source, S.Node.make [])
+      state, CEval (source, [])
   in
   let buf = Buffer.create 64 in
   Buffer.add_string buf line;
@@ -136,28 +132,25 @@ let print_result env t v =
   pf (Pretty.Print.typ ~prec:0 ~env) t Eval.Value.pp v
 ;;
 
-let eval state = function
-  | CExit -> exit 0
-  | CHelp ->
-    print_string help;
-    flush stdout;
+let eval state cmd =
+  try
+    match cmd with
+    | CExit -> exit 0
+    | CHelp ->
+      print_string help;
+      flush stdout;
+      state
+    | CEval (_, xs) -> fst (State.next xs state)
+    | CExpr (_, expr) ->
+      let state, ts = State.next (expr_as_file expr) state in
+      (match List.find_opt (fun (x, _) -> T.Var.name x = "#res") (List.rev ts) with
+       | Some (x, t) ->
+         let v = Eval.Env.find x state.eval in
+         print_result (State.for_pp state) t v
+       | None -> ());
+      state
+  with
+  | Diagnostic.Error.Error diag ->
+    Diagnostic.print ~read:(State.read state) diag;
     state
-  | CEval (_, xs) ->
-    (try fst (State.next xs state) with
-     | Diagnostic.Error.Error diag ->
-       Diagnostic.print ~read:(State.read state) diag;
-       state)
-  | CExpr (_, expr) ->
-    (try
-       let state, ts = State.next (wrap_expr_as_bind expr) state in
-       (match List.find_opt (fun (x, _) -> T.Var.name x = it_name) (List.rev ts) with
-        | Some (x, t) ->
-          let v = Eval.Env.find x state.eval in
-          print_result (State.pretty_env state) t v
-        | None -> ());
-       state
-     with
-     | Diagnostic.Error.Error diag ->
-       Diagnostic.print ~read:(State.read state) diag;
-       state)
 ;;

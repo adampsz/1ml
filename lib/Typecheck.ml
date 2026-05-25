@@ -693,18 +693,17 @@ module Check = struct
   ;;
 
   let file env file =
-    let e = S.Node.map (fun xs -> Lang.Surface.EStruct xs) file in
     trace
       (fun m ->
          let expr = Format.with_margin 140 S.pp_expr in
          let expr = Format.with_max_boxes Int.max_int expr in
-         m ~header:"file" "%a" expr e)
+         m ~header:"file" "%a" expr (S.Node.make (Lang.Surface.EStruct file)))
       (fun t m ->
          let expr = Format.with_margin 140 T.Expr.pp in
          let expr = Format.with_max_boxes Int.max_int expr in
          m ~header:"file" "%a" expr t)
     @@ fun () ->
-    let _, _, e = modu_expr env e in
+    let _, _, e = modu_expr env (S.Node.make (Lang.Surface.EStruct file)) in
     e
   ;;
 end
@@ -723,8 +722,8 @@ module Session = struct
     { env = Env.enter_mod a Env.empty; eff = Pure; ks = []; ts = []; es = [] }
   ;;
 
-  let next state input =
-    let env, xs = List.fold_left_map Check.bind state.env (S.Node.data input) in
+  let next state file =
+    let env, xs = List.fold_left_map Check.bind state.env file in
     let ks = List.concat_map (fun (ks, _, _, _) -> ks) xs
     and eff = List.fold_left (fun a (_, eff, _, _) -> T.Effect.join a eff) Pure xs
     and ts = List.concat_map (fun (_, _, ts, _) -> ts) xs |> T.Var.normalize
