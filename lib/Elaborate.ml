@@ -9,47 +9,6 @@ module Ex = struct
   type typ = Existential(T.Type).t
 end
 
-module Flat = struct
-  type 'a t =
-    | FTyp of 'a
-    | FRecord of (S.Var.t * 'a t) list [@polyprinter Format.pp_print_record S.Var.pp]
-  [@@deriving show]
-
-  let rec fold_right f xs acc =
-    match xs with
-    | FTyp x -> f x acc
-    | FRecord xs -> List.fold_right (fun (_, xs) acc -> fold_right f xs acc) xs acc
-  ;;
-
-  let to_list xs = fold_right List.cons xs []
-
-  let rec map f = function
-    | FTyp x -> FTyp (f x)
-    | FRecord xs -> FRecord (List.map (fun (x, xs) -> x, map f xs) xs)
-  ;;
-end
-
-module Flatten = struct
-  let rec kind k =
-    let rec aux acc = function
-      | S.Kind.KType -> Some (Flat.FTyp (acc (Ex T.Kind.KType : Ex.kind)))
-      | S.Kind.KArrow (k1, k2) ->
-        let arrow (Ex k1 : Ex.kind) (Ex k2 : Ex.kind) : Ex.kind = Ex (KArrow (k1, k2)) in
-        let k1 = kind k1 in
-        aux (fun k2 -> acc (Flat.fold_right arrow k1 k2)) k2
-      | S.Kind.KRecord xs ->
-        (match List.Assoc.filter_map (fun k -> aux acc k) xs with
-         | [] -> None
-         | xs -> Some (Flat.FRecord xs))
-    in
-    match aux Fun.id k with
-    | Some k -> k
-    | None -> Flat.FRecord []
-  ;;
-
-  let tvar k = Flat.map (fun (Ex k : Ex.kind) : Ex.tvar -> Ex (T.TVar.fresh k)) (kind k)
-end
-
 module Sugar = struct
   open Ex
 
@@ -126,6 +85,10 @@ end
 module Env : sig
   type t
 
+  (** Each source [TVar.t] of (potentially) record kind elaborates to a flat list
+      of F-Omega tvars, indexed by projection path within the source kind. *)
+  type entries = (S.Var.t list * Ex.tvar) list
+
   val empty : t
   val add_var : S.Var.t -> t -> t * T.Var.t
   val find_var : S.Var.t -> t -> T.Var.t
@@ -133,23 +96,18 @@ module Env : sig
   val enter_field : S.Var.t -> t -> t
   val enter_lam : S.TVar.t -> t -> t
   val add_tvar : S.TVar.t -> t -> t * Ex.tvar list
-  val find_tvar : S.TVar.t -> t -> Ex.tvar Flat.t
-  val [@deprecated] module_tvars : t -> Ex.tvar list
+  val find_tvar : S.TVar.t -> t -> entries
+  val module_tvars : t -> Ex.tvar list
 end = struct
+  type entries = (S.Var.t list * Ex.tvar) list
+
   type t =
-    { module_tvars : Ex.tvar Flat.t option
-    ; vars : T.Var.t S.Var.Map.t
-    ; tvars : Ex.tvar Flat.t S.TVar.Map.t
-    ; path : S.TVar.t S.Path.t
+    { vars : T.Var.t S.Var.Map.t
+    ; tvars : entries S.TVar.Map.t
+    ; current : entries
     }
 
-  let empty =
-    { module_tvars = None
-    ; vars = S.Var.Map.empty
-    ; tvars = S.TVar.Map.empty
-    ; path = S.Path.empty
-    }
-  ;;
+  let empty = { vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; current = [] }
 
   let add_var x env =
     let x' = T.Var.fresh ~name:(S.Var.name x) () in
@@ -163,29 +121,71 @@ end = struct
     | None -> Format.kasprintf failwith "unbound variable: %a" S.Var.pp x
   ;;
 
+  (** Flatten a source kind into the leaf kinds an F-Omega tvar must have,
+      keyed by projection path. Record-kinded arguments of arrows are curried
+      into the leaf kinds. *)
+  let flatten_kind k =
+    let rec aux prefix = function
+      | S.Kind.KType -> [ List.rev prefix, (Ex T.Kind.KType : Ex.kind) ]
+      | S.Kind.KArrow (k1, k2) ->
+        let args = aux [] k1 in
+        aux prefix k2
+        |> List.map (fun (path, k) ->
+          ( path
+          , List.fold_right
+              (fun (_, (Ex k1 : Ex.kind)) (Ex k : Ex.kind) ->
+                (Ex (T.Kind.KArrow (k1, k)) : Ex.kind))
+              args
+              k ))
+      | S.Kind.KRecord xs -> List.concat_map (fun (x, k) -> aux (x :: prefix) k) xs
+    in
+    aux [] k
+  ;;
+
   let add_tvar a env =
-    let a' = Flatten.tvar (S.TVar.kind a) in
+    let entries =
+      flatten_kind (S.TVar.kind a)
+      |> List.map (fun (path, (Ex k : Ex.kind)) ->
+        path, (Ex (T.TVar.fresh k) : Ex.tvar))
+    in
     if not (S.Kind.is_empty (S.TVar.kind a))
     then
       debug (fun m ->
         let pp_tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
-        m ~header:"tvar" "%a -> %a" S.TVar.pp a (Flat.pp pp_tvar) a');
-    { env with tvars = S.TVar.Map.add a a' env.tvars }, Flat.to_list a'
+        let pp_path =
+          Format.pp_print_list
+            ~pp_sep:(fun p () -> Format.pp_print_char p '.')
+            S.Var.pp
+        in
+        let pp_entry ppf (p, t) = Format.fprintf ppf "%a=%a" pp_path p pp_tvar t in
+        let pp_sep ppf () = Format.pp_print_string ppf "; " in
+        m
+          ~header:"tvar"
+          "%a -> [%a]"
+          S.TVar.pp
+          a
+          (Format.pp_print_list ~pp_sep pp_entry)
+          entries);
+    { env with tvars = S.TVar.Map.add a entries env.tvars }, List.map snd entries
   ;;
 
   let enter_mod a env =
-    { env with module_tvars = S.TVar.Map.find_opt a env.tvars; path = S.Path.PVar a }
+    { env with current = S.TVar.Map.find_opt a env.tvars |> Option.value ~default:[] }
   ;;
 
   let enter_field x env =
-    let env = { env with path = S.Path.PProj (env.path, x) } in
-    match env.module_tvars with
-    | Some (Flat.FRecord xs) -> { env with module_tvars = List.assoc_opt x xs }
-    | None -> env
-    | _ -> invalid_arg "Env.enter_field"
+    let current =
+      List.filter_map
+        (fun (path, t) ->
+          match path with
+          | y :: rest when S.Var.equal y x -> Some (rest, t)
+          | _ -> None)
+        env.current
+    in
+    { env with current }
   ;;
 
-  let enter_lam x env = { env with path = S.Path.PApp (env.path, x) }
+  let enter_lam _ env = env
 
   let find_tvar a env =
     match S.TVar.Map.find_opt a env.tvars with
@@ -193,16 +193,10 @@ end = struct
     | None -> Format.kasprintf failwith "unbound type variable: %a" S.TVar.pp a
   ;;
 
-  let[@deprecated] module_tvars env =
-    match env.module_tvars with
-    | Some a -> Flat.to_list a
-    | None -> []
-  ;;
+  let module_tvars env = List.map snd env.current
 end
 
 module Type = struct
-  open Ex
-
   let rec typ env t =
     trace
       (fun m -> m ~header:"typ" "%a" S.Type.pp t)
@@ -237,33 +231,42 @@ module Type = struct
       (fun m -> m ~header:"path" "")
       (fun (Ex t : Ex.typ) m -> m ~header:"path" "~> %t" (fun ppf -> T.Type.pp ppf t))
     @@ fun () ->
-    let rec aux acc a r =
-      match a, r with
-      | Flat.FTyp (Ex x : Ex.tvar), S.Path.Rev.RPNil -> acc (Ex (T.Type.TVar x) : Ex.typ)
-      | Flat.FRecord xs, S.Path.Rev.RPProj (r, x) -> aux acc (List.assoc x xs) r
-      | a, S.Path.Rev.RPApp (r1, c2) ->
+    let rec aux acc entries = function
+      | S.Path.Rev.RPNil ->
+        (match entries with
+         | [ ([], (Ex x : Ex.tvar)) ] -> acc (Ex (T.Type.TVar x) : Ex.typ)
+         | _ -> assert false)
+      | S.Path.Rev.RPProj (r, x) ->
+        let entries =
+          List.filter_map
+            (fun (path, t) ->
+              match path with
+              | y :: rest when S.Var.equal y x -> Some (rest, t)
+              | _ -> None)
+            entries
+        in
+        aux acc entries r
+      | S.Path.Rev.RPApp (r1, c2) ->
         let t2 = cons env c2 in
-        aux (fun t1 -> List.fold_left Sugar.Type.app (acc t1) t2) a r1
-      | _ -> assert false
+        aux (fun t1 -> List.fold_left Sugar.Type.app (acc t1) t2) entries r1
     in
     let a, r = S.Path.rev p in
     aux Fun.id (Env.find_tvar a env) r
 
   and cons env c =
-    let rec aux env acc = function
-      | S.Type.CType t -> Some (Flat.FTyp (acc (Ex (typ env t) : Ex.typ)))
+    let rec aux env = function
+      | S.Type.CType t -> [ (Ex (typ env t) : Ex.typ) ]
       | S.Type.CLam (a1, c2) ->
-        let lam (Ex a1 : Ex.tvar) (Ex c2 : Ex.typ) : Ex.typ = Ex (TLam (a1, c2)) in
-        let env, a1 = Env.add_tvar a1 env in
-        aux env (fun c2 -> acc (List.fold_right lam a1 c2)) c2
-      | S.Type.CRecord xs ->
-        (match List.Assoc.filter_map (fun k -> aux env acc k) xs with
-         | [] -> None
-         | xs -> Some (Flat.FRecord xs))
+        let env, args = Env.add_tvar a1 env in
+        aux env c2
+        |> List.map (fun (Ex c : Ex.typ) ->
+          List.fold_right
+            (fun (Ex a : Ex.tvar) (Ex c : Ex.typ) -> (Ex (T.Type.TLam (a, c)) : Ex.typ))
+            args
+            (Ex c : Ex.typ))
+      | S.Type.CRecord xs -> List.concat_map (fun (_, k) -> aux env k) xs
     in
-    match aux env Fun.id c with
-    | Some c -> Flat.to_list c
-    | None -> []
+    aux env c
   ;;
 end
 
