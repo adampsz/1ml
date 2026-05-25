@@ -59,7 +59,7 @@
 %right "**"
 
 %start<Lang.Surface.file> file
-%start<(Lang.Surface.expr, Lang.Surface.file) Either.t> repl_line
+%start<Lang.Surface.expr> repl
 
 %{
   open Lang.Surface
@@ -76,9 +76,8 @@ file:
   | bs=punctuated_list(";"+, bind) EOF { List.concat bs }
 ;
 
-repl_line:
-  | e=expr EOF                        { Either.Left e }
-  | bs=punctuated_list(";"+, bind) EOF { Either.Right (List.concat bs) }
+repl:
+  | e=expr EOF { e }
 ;
 
 (* Types *)

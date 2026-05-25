@@ -103,7 +103,7 @@ module Error = struct
 
   let not_assignable ?span ?cause env t' t =
     let span =
-      match span, T.Type.span t, T.Type.span t' with
+      match span, T.Type.span t', T.Type.span t with
       | Some span, _, _ | _, Some span, _ | _, _, Some span -> Some span
       | _, _, _ -> None
     in

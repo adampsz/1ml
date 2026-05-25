@@ -26,7 +26,7 @@ module State = struct
   let filename state = Printf.sprintf "<repl-%d>" (List.length state.history + 1)
 
   let nth_back_opt i xs =
-    let i = List.length xs - i - 1 in
+    let i = List.length xs - i in
     if i < 0 then None else List.nth_opt xs i
   ;;
 
@@ -94,7 +94,7 @@ let read_code ?filename state line =
     | Left expr -> State.append source state, CExpr (source, expr)
     | Right file -> State.append source state, CEval (source, file)
     | exception Diagnostic.Error.Error diag when error_at_eof buf diag ->
-      (match prompt "..> " with
+      (match prompt " ..> " with
        | line ->
          Buffer.add_string buf line;
          Buffer.add_char buf '\n';
@@ -140,14 +140,14 @@ let eval state cmd =
       print_string help;
       flush stdout;
       state
-    | CEval (_, xs) -> fst (State.next xs state)
+    | CEval (_, xs) ->
+      let state, _ = State.next xs state in
+      state
     | CExpr (_, expr) ->
       let state, ts = State.next (expr_as_file expr) state in
-      (match List.find_opt (fun (x, _) -> T.Var.name x = "#res") (List.rev ts) with
-       | Some (x, t) ->
-         let v = Eval.Env.find x state.eval in
-         print_result (State.for_pp state) t v
-       | None -> ());
+      let x, t = Lang.Typed.Var.assoc "#res" ts in
+      let v = Eval.Env.find x state.eval in
+      print_result (State.for_pp state) t v;
       state
   with
   | Diagnostic.Error.Error diag ->

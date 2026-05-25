@@ -5,6 +5,12 @@ let parse_with entry lexbuf =
     Util.Diagnostic.Error.error ~span ~inner "parse error"
 ;;
 
+let parse_string_with entry ~filename input =
+  let lexbuf = Lexing.from_string input in
+  Lexing.set_filename lexbuf filename;
+  parse_with entry lexbuf
+;;
+
 let parse_file path =
   let chan = In_channel.open_text path in
   let lexbuf = Lexing.from_channel chan in
@@ -19,7 +25,14 @@ let parse_stdin () =
 ;;
 
 let parse_repl ~filename input =
-  let lexbuf = Lexing.from_string input in
-  Lexing.set_filename lexbuf filename;
-  parse_with Parser.repl_line lexbuf
+  let pos diag =
+    match Util.Diagnostic.span diag with
+    | Some (_, p) -> p.pos_cnum
+    | _ -> 0
+  in
+  try Either.Left (parse_string_with Parser.repl ~filename input) with
+  | Util.Diagnostic.Error.Error diag ->
+    (try Either.Right (parse_string_with Parser.file ~filename input) with
+     | Util.Diagnostic.Error.Error diag' when pos diag' < pos diag ->
+       raise (Util.Diagnostic.Error.Error diag))
 ;;

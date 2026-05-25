@@ -35,7 +35,8 @@ let file inputs =
 
 let rec repl state =
   let state, cmd = Repl.read state in
-  repl (Repl.eval state cmd)
+  let state = Repl.eval state cmd in
+  repl state
 ;;
 
 let load_prelude path state = fst (Repl.State.next (Syntax.parse_file path) state)
