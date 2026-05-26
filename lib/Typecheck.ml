@@ -709,6 +709,12 @@ module Check = struct
          m ~header:"file" "%a" expr t)
     @@ fun () ->
     let _, _, e = modu_expr env (S.Node.make (Lang.Surface.EStruct file)) in
+    (try
+       let _ = T.Invariant.expr e in
+       ()
+     with
+     | T.Invariant.Violation msg ->
+       Diagnostic.Error.error "internal invariant violation: %s" msg);
     e
   ;;
 end
