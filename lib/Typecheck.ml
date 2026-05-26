@@ -154,10 +154,8 @@ module Implicit = struct
         let a = T.TVar.fresh T.Kind.KType in
         T.UVar.set z (TAbstr (PVar a));
         let t1 = TInfer z |> wrap in
-        let t1 = TMod (a, TSingleton t1 |> wrap) |> wrap
-        and t2 = snd acc in
-        ( (fun e -> T.Expr.EFun (T.Var.fresh "a", t1, Implicit, fst acc e))
-        , TArrow (T.Var.fresh "a", t1, Implicit, t2) |> wrap )
+        let t1 = TMod (a, TSingleton t1 |> wrap) |> wrap in
+        t1 :: acc
       | TInfer _ -> acc
       | TAbstr p -> path acc p
       | TPrim _ -> acc
@@ -175,7 +173,11 @@ module Implicit = struct
       | T.Type.CLam (_, t) -> cons acc t
       | T.Type.CRecord ts -> List.fold_left (fun xs (_, t) -> cons xs t) acc ts
     in
-    typ (Fun.id, t) t
+    let ts = typ [] t in
+    let xs = List.mapi (fun i t1 -> T.Var.fresh (NameSeq.nth i), t1) (List.rev ts) in
+    let t = List.fold_right (fun (x, t1) t -> TArrow (x, t1, Implicit, t) |> wrap) xs t in
+    let g e = List.fold_right (fun (x, t1) e -> T.Expr.EFun (x, t1, Implicit, e)) xs e in
+    g, t
   ;;
 
   let instantiate env t =

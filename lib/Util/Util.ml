@@ -40,6 +40,19 @@ module Counter = struct
   end
 end
 
+module NameSeq = struct
+  let nth n =
+    let buf = Buffer.create 1 in
+    let rec loop n =
+      let c = Char.chr (Char.code 'a' + (n mod 26)) in
+      if n >= 26 then loop ((n / 26) - 1);
+      Buffer.add_char buf c
+    in
+    loop n;
+    Buffer.contents buf
+  ;;
+end
+
 module Once : sig
   type 'a t
 

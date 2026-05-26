@@ -146,8 +146,12 @@ module Print = struct
       Prec.wrap prec (Prec.abstr ~prec p) ppf
       @@ fun ppf prec ->
       match p with
-      | Abstr.DProj (Abstr.DNil, x, _) -> Format.fprintf ppf "%a" var x
-      | Abstr.DProj (p, x, _) -> Format.fprintf ppf "%a@,.%a" (aux ~prec) p var x
+      | Abstr.DProj (Abstr.DNil, x, shadowed) ->
+        let prefix = if shadowed then "#" else "" in
+        Format.fprintf ppf "%s%a" prefix var x
+      | Abstr.DProj (p, x, shadowed) ->
+        let prefix = if shadowed then "#" else "" in
+        Format.fprintf ppf "%a@,.%s%a" (aux ~prec) p prefix var x
       | Abstr.DApp (p, a) ->
         Format.fprintf ppf "%a@ %a" (aux ~prec) p (arg ~prec:(prec + 1)) a
       | Abstr.DNil -> assert false
