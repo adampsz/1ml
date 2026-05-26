@@ -262,7 +262,7 @@ module Sugar = struct
     | "float" -> TPrim PFloat @@ span
     | "char" -> TPrim PChar @@ span
     | "string" -> TPrim PString @@ span
-    | _ -> failwith "todo unknown type"
+    | s -> Diagnostic.Error.error ?span "unknown external type `%s'" s
   ;;
 
   let bind_typ ?span id ps t = [ BVal (Public, id, typ_fun ps t) @@ span ]

@@ -207,7 +207,7 @@ module Eval = struct
     | L.Expr.EExtern (s, _) ->
       (match Env.extern s env with
        | Some v -> v
-       | None -> assert false)
+       | None -> Diagnostic.Error.error "undefined external symbol `%s'" s)
     | L.Expr.EWrap (e, _) -> Value.VWrapped (eval env e)
     | L.Expr.EUnwrap e ->
       (match eval env e with
