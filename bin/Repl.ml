@@ -42,12 +42,8 @@ module State = struct
     { state with typecheck; eval }, ts
   ;;
 
-  let for_pp state =
-    List.fold_left
-      (fun env (x, t) -> Pretty.Env.add_var x t env)
-      Pretty.Env.empty
-      state.typecheck.ts
-  ;;
+  let path state = OneMl.Typecheck.Env.path state.typecheck.env
+  let for_pp state = OneMl.Typecheck.Env.for_pp state.typecheck.env
 end
 
 let expr_as_file expr =
@@ -127,9 +123,9 @@ let read state =
     state, CExit
 ;;
 
-let print_result env t v =
+let print_result path env t v =
   let pf = Format.printf "@[<2> :@ %a =@ %a@]@." in
-  pf (Pretty.Print.typ ~prec:0 ~env) t Eval.Value.pp v
+  pf (Pretty.Print.typ ~path ~prec:0 ~env) t Eval.Value.pp v
 ;;
 
 let eval state cmd =
@@ -147,7 +143,7 @@ let eval state cmd =
       let state, ts = State.next (expr_as_file expr) state in
       let x, t = Lang.Typed.Var.assoc "#res" ts in
       let v = Eval.Env.find x state.eval in
-      print_result (State.for_pp state) t v;
+      print_result (State.path state) (State.for_pp state) t v;
       state
   with
   | Diagnostic.Error.Error diag ->

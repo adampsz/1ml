@@ -73,7 +73,10 @@ end
 module Error = struct
   open Diagnostic.Error
 
-  let pp_typ env ppf t = Pretty.Print.typ ~prec:0 ~env:(Env.for_pp env) ppf t
+  let pp_typ env ppf t =
+    Pretty.Print.typ ~path:(Env.path env) ~prec:0 ~env:(Env.for_pp env) ppf t
+  ;;
+
   let missing_field ?span x = error ?span "record is missing field `%s'" x
 
   let expected_record_type ?span env t =
