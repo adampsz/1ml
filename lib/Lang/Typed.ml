@@ -445,14 +445,14 @@ module Type = struct
     let lookup f p c =
       let rec aux = function
         | Path.Rev.RPNil, CType t -> Some t
-        | Path.Rev.RPNil, _ -> invalid_arg "Cons.get"
+        | Path.Rev.RPNil, _ -> invalid_arg "Cons.lookup"
         | Path.Rev.RPProj (r, x), CRecord xs ->
           (match List.assoc_opt x xs with
            | Some c -> aux (r, c)
            | None -> None)
-        | Path.Rev.RPProj _, _ -> invalid_arg "Cons.get"
+        | Path.Rev.RPProj _, _ -> invalid_arg "Cons.lookup"
         | Path.Rev.RPApp (r, x), CLam (a, c) -> aux (r, f a x c)
-        | Path.Rev.RPApp _, _ -> invalid_arg "Cons.get"
+        | Path.Rev.RPApp _, _ -> invalid_arg "Cons.lookup"
       in
       let _, r = Path.rev p in
       aux (r, c)

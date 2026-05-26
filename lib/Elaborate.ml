@@ -82,12 +82,54 @@ module Sugar = struct
   end
 end
 
+module Mapping = struct
+  type 'a t =
+    | MRecord of (S.Var.t * 'a t) list
+    | MType of 'a
+
+  let get p m =
+    let rec aux = function
+      | S.Path.Rev.RPNil, MType t -> Some t
+      | S.Path.Rev.RPNil, _ -> invalid_arg "Mapping.get"
+      | S.Path.Rev.RPProj (r, x), MRecord xs ->
+        (match List.assoc_opt x xs with
+         | Some m -> aux (r, m)
+         | None -> None)
+      | S.Path.Rev.RPProj _, _ -> invalid_arg "Mapping.get"
+      | S.Path.Rev.RPApp (r, _), m -> aux (r, m)
+    in
+    let _, r = S.Path.rev p in
+    aux (r, m)
+  ;;
+
+  let to_list m =
+    let rec aux acc = function
+      | MRecord xs -> List.fold_left (fun acc (_, c) -> aux acc c) acc xs
+      | MType t -> t :: acc
+    in
+    List.rev (aux [] m)
+  ;;
+
+  let rec map f = function
+    | MRecord xs -> MRecord (List.map (fun (x, m) -> x, map f m) xs)
+    | MType t -> MType (f t)
+  ;;
+
+  let of_kind k =
+    let arrow (Ex k1 : Ex.kind) (Ex k2 : Ex.kind) : Ex.kind =
+      Ex (T.Kind.KArrow (k1, k2))
+    in
+    let rec aux args = function
+      | S.Kind.KType -> MType (List.fold_right arrow args (Ex KType : Ex.kind))
+      | S.Kind.KArrow (k1, k2) -> aux (args @ to_list (aux [] k1)) k2
+      | S.Kind.KRecord xs -> MRecord (List.map (fun (x, k) -> x, aux args k) xs)
+    in
+    aux [] k
+  ;;
+end
+
 module Env : sig
   type t
-
-  (** Each source [TVar.t] of (potentially) record kind elaborates to a flat list
-      of F-Omega tvars, indexed by projection path within the source kind. *)
-  type entries = (S.Var.t list * Ex.tvar) list
 
   val empty : t
   val add_var : S.Var.t -> t -> t * T.Var.t
@@ -96,18 +138,18 @@ module Env : sig
   val enter_field : S.Var.t -> t -> t
   val enter_lam : S.TVar.t -> t -> t
   val add_tvar : S.TVar.t -> t -> t * Ex.tvar list
-  val find_tvar : S.TVar.t -> t -> entries
+  val find_tvar : S.TVar.t -> t -> Ex.tvar Mapping.t
   val module_tvars : t -> Ex.tvar list
 end = struct
-  type entries = (S.Var.t list * Ex.tvar) list
-
   type t =
     { vars : T.Var.t S.Var.Map.t
-    ; tvars : entries S.TVar.Map.t
-    ; current : entries
+    ; tvars : Ex.tvar Mapping.t S.TVar.Map.t
+    ; current : Ex.tvar Mapping.t
     }
 
-  let empty = { vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; current = [] }
+  let empty =
+    { vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; current = Mapping.MRecord [] }
+  ;;
 
   let add_var x env =
     let x' = T.Var.fresh ~name:(S.Var.name x) () in
@@ -121,66 +163,39 @@ end = struct
     | None -> Format.kasprintf failwith "unbound variable: %a" S.Var.pp x
   ;;
 
-  (** Flatten a source kind into the leaf kinds an F-Omega tvar must have,
-      keyed by projection path. Record-kinded arguments of arrows are curried
-      into the leaf kinds. *)
-  let flatten_kind k =
-    let rec aux prefix = function
-      | S.Kind.KType -> [ List.rev prefix, (Ex T.Kind.KType : Ex.kind) ]
-      | S.Kind.KArrow (k1, k2) ->
-        let args = aux [] k1 in
-        aux prefix k2
-        |> List.map (fun (path, k) ->
-          ( path
-          , List.fold_right
-              (fun (_, (Ex k1 : Ex.kind)) (Ex k : Ex.kind) ->
-                (Ex (T.Kind.KArrow (k1, k)) : Ex.kind))
-              args
-              k ))
-      | S.Kind.KRecord xs -> List.concat_map (fun (x, k) -> aux (x :: prefix) k) xs
-    in
-    aux [] k
-  ;;
-
   let add_tvar a env =
     let entries =
-      flatten_kind (S.TVar.kind a)
-      |> List.map (fun (path, (Ex k : Ex.kind)) ->
-        path, (Ex (T.TVar.fresh k) : Ex.tvar))
+      Mapping.of_kind (S.TVar.kind a)
+      |> Mapping.map (fun (Ex k : Ex.kind) -> (Ex (T.TVar.fresh k) : Ex.tvar))
     in
     if not (S.Kind.is_empty (S.TVar.kind a))
     then
       debug (fun m ->
         let pp_tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
-        let pp_path =
-          Format.pp_print_list
-            ~pp_sep:(fun p () -> Format.pp_print_char p '.')
-            S.Var.pp
-        in
-        let pp_entry ppf (p, t) = Format.fprintf ppf "%a=%a" pp_path p pp_tvar t in
         let pp_sep ppf () = Format.pp_print_string ppf "; " in
         m
           ~header:"tvar"
           "%a -> [%a]"
           S.TVar.pp
           a
-          (Format.pp_print_list ~pp_sep pp_entry)
-          entries);
-    { env with tvars = S.TVar.Map.add a entries env.tvars }, List.map snd entries
+          (Format.pp_print_list ~pp_sep pp_tvar)
+          (Mapping.to_list entries));
+    { env with tvars = S.TVar.Map.add a entries env.tvars }, Mapping.to_list entries
   ;;
 
   let enter_mod a env =
-    { env with current = S.TVar.Map.find_opt a env.tvars |> Option.value ~default:[] }
+    { env with
+      current =
+        S.TVar.Map.find_opt a env.tvars |> Option.value ~default:(Mapping.MRecord [])
+    }
   ;;
 
   let enter_field x env =
     let current =
-      List.filter_map
-        (fun (path, t) ->
-          match path with
-          | y :: rest when S.Var.equal y x -> Some (rest, t)
-          | _ -> None)
-        env.current
+      match env.current with
+      | Mapping.MRecord xs ->
+        Option.value ~default:(Mapping.MRecord []) (List.assoc_opt x xs)
+      | _ -> Mapping.MRecord []
     in
     { env with current }
   ;;
@@ -193,7 +208,7 @@ end = struct
     | None -> Format.kasprintf failwith "unbound type variable: %a" S.TVar.pp a
   ;;
 
-  let module_tvars env = List.map snd env.current
+  let module_tvars env = Mapping.to_list env.current
 end
 
 module Type = struct
@@ -231,24 +246,24 @@ module Type = struct
       (fun m -> m ~header:"path" "")
       (fun (Ex t : Ex.typ) m -> m ~header:"path" "~> %t" (fun ppf -> T.Type.pp ppf t))
     @@ fun () ->
-    let rec aux acc entries = function
+    let rec aux acc m = function
       | S.Path.Rev.RPNil ->
-        (match entries with
-         | [ ([], (Ex x : Ex.tvar)) ] -> acc (Ex (T.Type.TVar x) : Ex.typ)
+        (match m with
+         | Mapping.MType (Ex x : Ex.tvar) -> acc (Ex (T.Type.TVar x) : Ex.typ)
          | _ -> assert false)
       | S.Path.Rev.RPProj (r, x) ->
-        let entries =
-          List.filter_map
-            (fun (path, t) ->
-              match path with
-              | y :: rest when S.Var.equal y x -> Some (rest, t)
-              | _ -> None)
-            entries
+        let m =
+          match m with
+          | Mapping.MRecord xs ->
+            (match List.assoc_opt x xs with
+             | Some m -> m
+             | None -> assert false)
+          | _ -> assert false
         in
-        aux acc entries r
+        aux acc m r
       | S.Path.Rev.RPApp (r1, c2) ->
         let t2 = cons env c2 in
-        aux (fun t1 -> List.fold_left Sugar.Type.app (acc t1) t2) entries r1
+        aux (fun t1 -> List.fold_left Sugar.Type.app (acc t1) t2) m r1
     in
     let a, r = S.Path.rev p in
     aux Fun.id (Env.find_tvar a env) r
