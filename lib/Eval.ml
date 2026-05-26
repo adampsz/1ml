@@ -19,6 +19,8 @@ module Value = struct
        | CFloat f -> Format.pp_print_string ppf (Float.to_string f)
        | CChar c -> Format.fprintf ppf "%C" c
        | CString s -> Format.fprintf ppf "%S" s)
+    | VRecord vs when Pretty.Print.is_tuple vs ->
+      Pretty.Print.tuple (fun ppf (_, v) -> pp ppf v) ppf vs
     | VRecord vs ->
       let entry ppf (x, v) =
         Format.fprintf ppf "@[<2>%a =@ %a@]" Pretty.Print.var x pp v

@@ -113,6 +113,26 @@ module Print = struct
       Format.fprintf ppf "%t@]}" br
   ;;
 
+  let is_tuple entries =
+    let rec aux i = function
+      | [] -> i >= 2
+      | (k, _) :: rest when T.Var.name k = Int.to_string i -> aux (i + 1) rest
+      | _ -> false
+    in
+    aux 0 entries
+  ;;
+
+  let tuple fmt ppf entries =
+    let is_first = ref true in
+    let aux entry =
+      if !is_first then is_first := false else Format.fprintf ppf ",@ ";
+      fmt ppf entry
+    in
+    Format.fprintf ppf "(@[<hv 0>";
+    List.iter aux entries;
+    Format.fprintf ppf "@])"
+  ;;
+
   let rec abstr ~prec ~env ppf p =
     let rec aux ~prec ppf p =
       Prec.wrap prec (Prec.abstr ~prec p) ppf
@@ -167,6 +187,8 @@ module Print = struct
         | _ -> typ ~prec ~env ppf t
       in
       Format.fprintf ppf "@[<2>%a@]" (pp ~env) t
+    | TRecord ts when is_tuple ts ->
+      tuple (fun ppf (_, v) -> typ ~prec:0 ~env ppf v) ppf ts
     | TRecord ts ->
       let env = ref env in
       let entry ppf (k, v) =
