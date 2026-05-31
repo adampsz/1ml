@@ -42,7 +42,7 @@ let show_version () =
 
 let spec =
   [ "--repl", Arg.Set repl, "\tStart interactive repl"
-  ; "--prelude", set_string_opt prelude, "\tConfigure prelude file/directory"
+  ; "--prelude", set_string_opt prelude, "\tConfigure prelude file"
   ; "--trace", set_string_opt trace, "\tGenerate tracing artifacts in given directory"
   ; "--f-omega", Arg.Set fomega, "\tElaborate to F-omega and then evaluate"
   ; "--color", set_color color, "\tColorize output (always, never, auto)"
