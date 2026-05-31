@@ -24,13 +24,15 @@ let parse_stdin () =
   parse_with Parser.file lexbuf
 ;;
 
+let parse_typ ~filename input = parse_string_with Parser.typ_eof ~filename input
+
 let parse_repl ~filename input =
   let pos diag =
     match Util.Diagnostic.span diag with
     | Some (_, p) -> p.pos_cnum
     | _ -> 0
   in
-  try Either.Left (parse_string_with Parser.repl ~filename input) with
+  try Either.Left (parse_string_with Parser.expr_eof ~filename input) with
   | Util.Diagnostic.Error.Error diag ->
     (try Either.Right (parse_string_with Parser.file ~filename input) with
      | Util.Diagnostic.Error.Error diag' when pos diag' < pos diag ->

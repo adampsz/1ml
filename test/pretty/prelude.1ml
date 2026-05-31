@@ -1,0 +1,14 @@
+type unit = extern "unit";
+type bool = extern "bool";
+type int = extern "int";
+type float = extern "float";
+type char = extern "char";
+type string = extern "string";
+
+Opt :> { type t a } = { type t a = unit };
+type opt a = Opt.t a;
+
+Alt :> { type t a b } = { type t a b = unit };
+type alt a b = Alt.t a b;
+
+M :> { type t; type f a } = { type t = unit; type f a = unit };

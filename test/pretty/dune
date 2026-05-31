@@ -1,0 +1,6 @@
+(executable
+ (name pp)
+ (libraries OneMl))
+
+(cram
+ (deps ./pp.exe ./prelude.1ml))

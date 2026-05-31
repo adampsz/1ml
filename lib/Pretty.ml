@@ -191,7 +191,6 @@ module Print = struct
       let arg ~path ~prec ~env ppf = function
         | _, x, t when String.starts_with ~prefix:"#" (T.Var.name x) ->
           typ ~path ~prec:(prec + 1) ~env ppf t
-        | T.Type.Implicit, x, t when is_type_arg ~path t -> var ppf x
         | _, x, t ->
           Format.fprintf ppf (Prec.parens "%a:@ %a") var x (typ ~path ~prec:0 ~env) t
       in
@@ -201,9 +200,8 @@ module Print = struct
         | TArrow (x, t1, eff, t2) ->
           let a, t1 = T.Type.as_module t1 in
           let env = Env.add_tvar a env in
-          let path = T.Path.PVar a in
           let pf = Format.fprintf ppf "%a%a %a@ %a" in
-          let pf = pf tick eff (arg ~path ~prec ~env) (eff, x, t1) in
+          let pf = pf tick eff (arg ~path:(T.Path.PVar a) ~prec ~env) (eff, x, t1) in
           pf arrow eff (pp ~path:(PApp (path, a)) ~env:(Env.add_var x t1 env)) t2
         | _ -> typ ~path ~prec ~env ppf t
       in
@@ -227,10 +225,10 @@ module Print = struct
       Format.fprintf
         ppf
         "@[<2>(=@ type %a@;<0 -2>)@]"
-        (typ ~path:T.Path.empty ~prec:0 ~env)
+        (typ ~path ~prec:0 ~env)
         t'
     | TWrapped t ->
-      Format.fprintf ppf "@[<2>wrap@ %a@]" (typ ~path:T.Path.empty ~prec:3 ~env) t
-    | TMod (a, t) -> typ ~path ~prec ~env:(Env.add_tvar a env) ppf t
+      Format.fprintf ppf "@[<2>wrap@ %a@]" (typ ~path ~prec:3 ~env) t
+    | TMod (a, t) -> typ ~path:(T.Path.PVar a) ~prec ~env:(Env.add_tvar a env) ppf t
   ;;
 end

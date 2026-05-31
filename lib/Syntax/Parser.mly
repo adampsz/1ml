@@ -59,7 +59,8 @@
 %right "**"
 
 %start<Lang.Surface.file> file
-%start<Lang.Surface.expr> repl
+%start<Lang.Surface.expr> expr_eof
+%start<Lang.Surface.typ> typ_eof
 
 %{
   open Lang.Surface
@@ -76,8 +77,12 @@ file:
   | bs=punctuated_list(";"+, bind) EOF { List.concat bs }
 ;
 
-repl:
+expr_eof:
   | e=expr EOF { e }
+;
+
+typ_eof:
+  | t=typ EOF { Sugar.as_typ t }
 ;
 
 (* Types *)
