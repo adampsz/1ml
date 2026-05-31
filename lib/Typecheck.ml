@@ -62,17 +62,13 @@ end = struct
   let path env = T.Env.path env.base
   let uvar env = TInfer (T.UVar.fresh (domain env)) |> wrap
   let eff t env = T.Type.eff (T.Path.var (path env)) t
-
   let base env = env.base
 end
 
 module Error = struct
   open Diagnostic.Error
 
-  let pp_typ env ppf t =
-    Pretty.Print.typ ~path:(Env.path env) ~prec:0 ~env:(Env.base env) ppf t
-  ;;
-
+  let pp_typ env ppf t = Pretty.Print.typ ~prec:0 ~env:(Env.base env) ppf t
   let missing_field ?span x = error ?span "record is missing field `%s'" x
 
   let expected_record_type ?span env t =

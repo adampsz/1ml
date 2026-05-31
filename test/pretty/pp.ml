@@ -1,9 +1,7 @@
 open OneMl
 module T = Lang.Typed
 
-let pp_typ env =
-  Pretty.Print.typ ~path:(Typecheck.Env.path env) ~prec:0 ~env:(Typecheck.Env.base env)
-;;
+let pp_typ env = Pretty.Print.typ ~prec:0 ~env:(Typecheck.Env.base env)
 
 let () =
   let prelude = Syntax.parse_file "prelude.1ml" in
