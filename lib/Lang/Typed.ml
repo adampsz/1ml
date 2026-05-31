@@ -634,37 +634,40 @@ end
 module Equal = struct
   let rename (f : ?rename:_ -> _) a' a = f ~rename:(TVar.Map.singleton a' a) Subst.id
 
-  let rec typ t' t =
+  let rec typ ?(unify = false) t' t =
     match Type.view t', Type.view t with
-    | TInfer z, v | v, TInfer z -> Type.resolve z (Type.wrap v)
-    | TAbstr p', TAbstr p -> Path.equal cons p' p
+    | (TInfer z, v | v, TInfer z) when unify -> Type.resolve z (Type.wrap v)
+    | TInfer z', TInfer z -> UVar.equal z' z
+    | TInfer _, _ -> false
+    | TAbstr p', TAbstr p -> Path.equal (cons ~unify) p' p
     | TAbstr _, _ -> false
     | TPrim p', TPrim p -> p' = p
     | TPrim _, _ -> false
     | TArrow (_, t1', eff', t2'), TArrow (_, t1, eff, t2) ->
       let (a', t1'), (a, t1) = Type.as_module t1', Type.as_module t1 in
       eff' = eff
-      && typ (rename Subst.typ a' a t1') t1
-      && typ (rename Subst.typ a' a t2') t2
+      && typ ~unify (rename Subst.typ a' a t1') t1
+      && typ ~unify (rename Subst.typ a' a t2') t2
     | TArrow _, _ -> false
     | TRecord ts', TRecord ts ->
-      List.equal (fun (x', t') (x, t) -> Var.equal x' x && typ t' t) ts' ts
+      let eq (x', t') (x, t) = Var.name x' = Var.name x && typ ~unify t' t in
+      List.equal eq ts' ts
     | TRecord _, _ -> false
-    | TSingleton t', TSingleton t -> typ t' t
+    | TSingleton t', TSingleton t -> typ ~unify t' t
     | TSingleton _, _ -> false
-    | TWrapped t', TWrapped t -> typ t' t
+    | TWrapped t', TWrapped t -> typ ~unify t' t
     | TWrapped _, _ -> false
-    | TMod (a', t'), TMod (a, t) -> typ (rename Subst.typ a' a t') t
+    | TMod (a', t'), TMod (a, t) -> typ ~unify (rename Subst.typ a' a t') t
     | TMod _, _ -> false
 
-  and cons c' c =
+  and cons ?unify c' c =
     match c', c with
-    | CType t', CType t -> typ t t'
+    | CType t', CType t -> typ ?unify t t'
     | CType _, _ -> false
-    | CLam (a', c'), CLam (a, c) -> cons (rename Subst.cons a' a c') c
+    | CLam (a', c'), CLam (a, c) -> cons ?unify (rename Subst.cons a' a c') c
     | CLam _, _ -> false
     | CRecord ts', CRecord ts ->
-      List.equal (fun (x', c') (x, c) -> Var.equal x' x && cons c' c) ts' ts
+      List.equal (fun (x', c') (x, c) -> Var.equal x' x && cons ?unify c' c) ts' ts
     | CRecord _, _ -> false
   ;;
 end
@@ -688,7 +691,7 @@ module Expr = struct
   [@@deriving show]
 
   and bind =
-    | BVal of Var.t * expr
+    | BVal of Surface.vis * Var.t * expr
     | BIncl of Surface.vis * expr * (Var.t * Type.t) list
   [@@deriving show]
 
@@ -704,83 +707,72 @@ module Expr = struct
   let as_expr a e = if TVar.is_empty a then e else EMod (a, e)
 end
 
-module Invariant : sig
-  exception Violation of string
+module Env = struct
+  type t =
+    { vars : Type.t Var.Map.t
+    ; tvars : TVar.Set.t
+    ; path : TVar.t Path.t
+    }
 
-  val typ : Type.t -> unit
-  val expr : Expr.t -> Type.t
-end = struct
-  exception Violation of string
+  let empty = { vars = Var.Map.empty; tvars = TVar.Set.empty; path = Path.empty }
+  let add_var x t env = { env with vars = Var.Map.add x t env.vars }
+  let add_tvar a env = { env with tvars = TVar.Set.add a env.tvars }
+  let enter_mod a env = { (add_tvar a env) with path = Path.PVar a }
+  let enter_lam a env = { (add_tvar a env) with path = Path.PApp (env.path, a) }
+  let enter_field x env = { env with path = Path.PProj (env.path, x) }
+  let find_var x env = Var.Map.find x env.vars
+  let find_tvar a env = if not (TVar.Set.mem a env.tvars) then raise Not_found
+end
 
-  let fail fmt = Format.kasprintf (fun s -> raise (Violation s)) fmt
+module Invariant = struct
+  exception Violation
+
+  let fail () = raise Violation
+  let invariant cond = if not cond then fail ()
 
   module Env = struct
-    type t =
-      { vars : Type.t Var.Map.t
-      ; tvars : TVar.Set.t
-      }
-
-    let empty = { vars = Var.Map.empty; tvars = TVar.Set.empty }
-    let add_var x t env = { env with vars = Var.Map.add x t env.vars }
-    let add_tvar a env = { env with tvars = TVar.Set.add a env.tvars }
+    include Env
 
     let find_var x env =
-      match Var.Map.find_opt x env.vars with
-      | Some t -> t
-      | None -> fail "unbound variable `%a'" Var.pp x
+      try find_var x env with
+      | Not_found -> fail ()
     ;;
 
-    (* Note: not strictly checked. Path resolution through
-       [Subst.typ] and [path_prepend] can leave tvars that are bound in some
-       surrounding scope that is hard to recover from the typed AST alone. *)
-    let check_tvar _ _ = ()
+    let find_tvar a env =
+      try find_tvar a env with
+      | Not_found -> fail ()
+    ;;
   end
 
-  let non_empty_tvar a what =
-    if Kind.is_empty (TVar.kind a)
-    then fail "%s requires non-empty kinded type variable `%a'" what TVar.pp a
-  ;;
-
-  let pure_or_implicit = function
-    | Type.Implicit | Type.Explicit Pure -> true
-    | Type.Explicit Impure -> false
-  ;;
-
-  (** Verify type structure: scoping and key invariants:
-      - no unresolved [TInfer]
-      - all type variables and paths bound in [env]
-      - [TMod (a, _)] requires [Kind.is_empty (TVar.kind a) = false]
-      - a pure or implicit [TArrow] does not return a [TMod] *)
   let rec typ env t =
+    trace
+      (fun m -> m ~header:"typ" "%a at %a" Type.pp t (Path.pp TVar.pp) env.Env.path)
+      (fun _ m -> m ~header:"typ" "ok")
+    @@ fun () ->
     match Type.view t with
-    | TInfer _ -> fail "unresolved type inference variable in `%a'" Type.pp t
+    | TInfer _ -> (* fail () *) ()
     | TAbstr p -> path env p
     | TPrim _ -> ()
-    | TArrow (_, t1, feff, t2) ->
-      let a, t1' = Type.as_module t1 in
-      let env' =
-        if Kind.is_empty (TVar.kind a) then env else Env.add_tvar a env
-      in
-      typ env' t1';
-      typ env' t2;
-      if pure_or_implicit feff
-      then (
-        match Type.view t2 with
-        | TMod _ -> fail "pure/implicit function returns a module type"
-        | _ -> ())
-    | TRecord xs -> List.iter (fun (_, ti) -> typ env ti) xs
-    | TSingleton ti -> typ env ti
-    | TWrapped ti -> typ env ti
-    | TMod (a, ti) ->
-      non_empty_tvar a "TMod";
-      typ (Env.add_tvar a env) ti
+    | TArrow (x, t1, _, t2) ->
+      typ env t1;
+      let a, t1 = Type.as_module t1 in
+      let env = Env.enter_lam a (Env.add_var x t1 (Env.add_tvar a env)) in
+      typ env t2
+    | TRecord xs ->
+      let decl (x, t) = typ (Env.enter_field x env) t in
+      List.iter decl xs
+    | TSingleton t -> typ env t
+    | TWrapped t -> typ env t
+    | TMod (a, t) ->
+      invariant (not (TVar.is_empty a));
+      typ (Env.enter_mod a env) t
 
   and path env = function
-    | Path.PVar a -> Env.check_tvar a env
+    | Path.PVar a -> Env.find_tvar a env
     | Path.PProj (p, _) -> path env p
     | Path.PApp (p, c) ->
-      path env p;
-      cons env c
+      cons env c;
+      path env p
 
   and cons env = function
     | Type.CType t -> typ env t
@@ -788,131 +780,106 @@ end = struct
     | Type.CRecord xs -> List.iter (fun (_, c) -> cons env c) xs
   ;;
 
-  (** Strip the outer [TMod (a, _)] wrapper, returning the inner type and
-      extending [env] with [a]. Leaves non-modules alone. *)
-  let open_mod env t =
-    match Type.view t with
-    | TMod (a, t) -> Env.add_tvar a env, t
-    | _ -> env, t
-  ;;
-
-  let as_arrow env t =
-    let env, t = open_mod env t in
-    match Type.view t with
-    | TArrow (x, t1, eff, t2) -> env, x, t1, eff, t2
-    | _ -> fail "expected function type, got `%a'" Type.pp t
-  ;;
-
-  let as_record env t =
-    let env, t = open_mod env t in
-    match Type.view t with
-    | TRecord xs -> env, xs
-    | _ -> fail "expected record type, got `%a'" Type.pp t
-  ;;
-
-  let as_wrapped env t =
-    let env, t = open_mod env t in
-    match Type.view t with
-    | TWrapped ti -> env, ti
-    | _ -> fail "expected wrapped type, got `%a'" Type.pp t
-  ;;
-
-  (** Verify the well-formedness of an expression and return its type. Type
-      equality is not checked exhaustively — types passed around in annotations
-      are validated structurally, but no deep equivalence against computed
-      types. *)
   let rec expr env e =
+    trace
+      (fun m -> m ~header:"expr" "%a at %a" Expr.pp e (Path.pp TVar.pp) env.Env.path)
+      (fun t m -> m ~header:"expr" "~> %a" Type.pp t)
+    @@ fun () ->
     match e with
-    | Expr.EVar x -> Env.find_var x env
-    | Expr.EConst c -> TPrim (Const.typ c) |> Type.wrap
-    | Expr.ECond (x, e1, e2, t) ->
-      let xt = Env.find_var x env in
-      (match Type.view (snd (open_mod env xt)) with
-       | TPrim PBool -> ()
-       | _ -> fail "condition variable `%a' is not a boolean" Var.pp x);
-      let _ = expr env e1 in
-      let _ = expr env e2 in
+    | EVar x -> Env.find_var x env
+    | EConst c -> Type.TPrim (Const.typ c) |> Type.wrap
+    | ECond (x, e1, e2, t) ->
+      invariant (Equal.typ (Env.find_var x env) (TPrim PBool |> Type.wrap));
+      invariant (Equal.typ (expr env e1) t);
+      invariant (Equal.typ (expr env e2) t);
       typ env t;
       t
-    | Expr.EStruct (binds, ts) ->
-      let env' = List.fold_left bind env binds in
-      List.iter
-        (fun (x, t) ->
-           let _ = Env.find_var x env' in
-           typ env' t)
-        ts;
+    | EStruct (xs, ts) ->
+      let _, xs = List.fold_left_map bind env xs in
+      let ts' = List.concat xs |> Var.normalize in
+      let eq (x', t') (x, t) = Var.equal x' x && Equal.typ t' t in
+      invariant (List.equal eq ts' ts);
       TRecord ts |> Type.wrap
-    | Expr.EProj (e, x, t) ->
-      let te = expr env e in
-      let env', xs = as_record env te in
-      (match List.find_opt (fun (y, _) -> Var.equal x y) xs with
-       | Some _ ->
-         typ env' t;
-         t
-       | None -> fail "projection: field `%a' not in record" Var.pp x)
-    | Expr.EFun (x, t1, feff, body) ->
-      typ env t1;
-      let a, t1' = Type.as_module t1 in
-      let env_a =
-        if Kind.is_empty (TVar.kind a) then env else Env.add_tvar a env
+    | EProj (e, x, t) ->
+      let t' =
+        match expr env e |> Type.view with
+        | TRecord ts' ->
+          (match List.assoc_opt x ts' with
+           | Some t' -> t'
+           | None -> fail ())
+        | _ -> fail ()
       in
-      let env_b = Env.add_var x t1' env_a in
-      let t2 = expr env_b body in
-      if pure_or_implicit feff
-      then (
-        match Type.view t2 with
-        | TMod _ -> fail "pure/implicit function returns a module"
-        | _ -> ());
-      TArrow (x, t1, feff, t2) |> Type.wrap
-    | Expr.EApp (e1, tc, feff, e2) ->
-      let t1 = expr env e1 in
-      let env', _, dom, arr_feff, ret = as_arrow env t1 in
-      if arr_feff <> feff
-      then fail "EApp effect annotation doesn't match function type";
-      let _ = expr env e2 in
-      cons env' tc;
-      let a1, _ = Type.as_module dom in
-      if Kind.is_empty (TVar.kind a1)
-      then ret
-      else Subst.typ (Subst.one a1 tc) ret
-    | Expr.EType t ->
+      invariant (Equal.typ t' t);
+      t
+    | EFun (x, t1, eff, e2) ->
+      typ env t1;
+      let a, t1 = Type.as_module t1 in
+      let env = Env.enter_lam a (Env.add_var x t1 (Env.add_tvar a env)) in
+      let t2 = expr env e2 in
+      TArrow (x, Type.as_type a t1, eff, t2) |> Type.wrap
+    | EApp (e, tc, eff', e1) ->
+      let t1, eff, t2 =
+        match expr env e |> Type.view with
+        | TArrow (_, t1, eff, t2) -> t1, eff, t2
+        | _ -> fail ()
+      in
+      let a, t1 = Type.as_module t1 in
+      let t1' = expr env e1 in
+      cons (Env.add_tvar a env) tc;
+      invariant (eff = eff');
+      invariant (Equal.typ (Subst.typ (Subst.one a tc) t1) t1');
+      Subst.typ (Subst.one a tc) t2
+    | EType t ->
       typ env t;
       TSingleton t |> Type.wrap
-    | Expr.EExtern (_, t) ->
+    | EExtern (_, t) ->
       typ env t;
       t
-    | Expr.EWrap (e, t) ->
-      let _ = expr env e in
-      typ env t;
-      TWrapped t |> Type.wrap
-    | Expr.EUnwrap e ->
-      let te = expr env e in
-      let _, inner = as_wrapped env te in
-      inner
-    | Expr.ESeal (e, c, t) ->
-      let _ = expr env e in
-      cons env c;
-      typ env t;
+    | EWrap (e, t) ->
+      let t' = TWrapped (expr env e) |> Type.wrap in
+      invariant (Equal.typ t' t);
       t
-    | Expr.EMod (a, e) ->
-      non_empty_tvar a "EMod";
-      let env' = Env.add_tvar a env in
-      let t = expr env' e in
+    | EUnwrap e ->
+      (match expr env e |> Type.view with
+       | TWrapped t -> t
+       | _ -> fail ())
+    | ESeal (e, tc, s) ->
+      let a, t =  Type.as_module (expr env e) in
+      cons (Env.add_tvar a env) tc;
+      let a = Path.var (env.path) in
+      invariant (Equal.typ (Subst.typ (Subst.one a tc) s) t);
+      s
+    | EMod (a, e) ->
+      invariant (not (TVar.is_empty a));
+      let t = expr (Env.enter_mod a env) e in
       TMod (a, t) |> Type.wrap
-    | Expr.EUse e ->
-      let t = expr env e in
-      snd (open_mod env t)
+    | EUse e ->
+      let path_map a f t =
+        let aux p =
+          if TVar.equal (Path.var p) a then Some (TAbstr (f p) |> Type.wrap) else None
+        in
+        Subst.typ aux t
+      in
+      (match expr env e |> Type.view with
+       | TMod (a, t) -> path_map a (Path.prepend (Type.path_to_abstr env.Env.path)) t
+       | _ -> fail ())
 
-  and bind env = function
-    | Expr.BVal (x, e) ->
-      let t = expr env e in
-      Env.add_var x t env
-    | Expr.BIncl (_, e, ts) ->
-      let t = expr env e in
-      let env', _ = as_record env t in
-      List.fold_left (fun env (x, t) -> typ env' t; Env.add_var x t env) env ts
+  and bind env b =
+    match b with
+    | Expr.BVal (vis, x, e) ->
+      let t = expr (Env.enter_field x env) e in
+      let env = Env.add_var x t env in
+      env, if vis = Public then [ x, t ] else []
+    | Expr.BIncl (vis, e, ts) ->
+      let ts =
+        match expr env e |> Type.view with
+        | TRecord ts' ->
+          let eq (x', t') (x, t) = Var.equal x' x && Equal.typ t' t in
+          invariant (List.equal eq ts' ts);
+          ts
+        | _ -> fail ()
+      in
+      let env = List.fold_left (fun env (x, t) -> Env.add_var x t env) env ts in
+      env, if vis = Public then ts else []
   ;;
-
-  let typ t = typ Env.empty t
-  let expr e = expr Env.empty e
 end

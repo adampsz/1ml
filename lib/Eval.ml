@@ -218,7 +218,7 @@ module Eval = struct
     | L.Expr.EUse e -> eval env e
 
   and bind env = function
-    | L.Expr.BVal (x, e) -> Env.add x (eval env e) env
+    | L.Expr.BVal (_, x, e) -> Env.add x (eval env e) env
     | L.Expr.BIncl (_, e, ts) ->
       (match eval env e with
        | Value.VRecord vs ->

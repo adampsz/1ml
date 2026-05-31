@@ -69,7 +69,7 @@ module Abstr = struct
         DApp (out, T.Subst.typ (T.Subst.one a c) t1), t
     in
     let out, t = generalize t out in
-    if T.Equal.typ t (TAbstr p |> T.Type.wrap) then Some out else None
+    if T.Equal.typ ~unify:true t (TAbstr p |> T.Type.wrap) then Some out else None
   ;;
 end
 

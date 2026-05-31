@@ -122,7 +122,8 @@ module Sugar = struct
       | PAnnot (p, t) ->
         let bs, x = expr_var_bind bs e in
         let f = ident None in
-        let b = BVal (Private, f, EFun (x, t, Explicit, EVar x @@ span) @@ span) @@ span in
+        let e = EFun (x, t, Explicit, EVar x @@ span) @@ span in
+        let b = BVal (Public, f, e) @@ span in
         aux (b :: bs) (EApp (f, x) @@ span) p
       | PSeal (p, t) ->
         let bs, x = expr_var_bind bs e in

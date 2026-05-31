@@ -385,7 +385,7 @@ module Elab = struct
       let f = List.fold_right (fun f e -> f e) fs in
       let f = Fun.compose (Sugar.Expr.unpack aks tmp e) f in
       env, (aks, f)
-    | S.Expr.BVal (x, e) ->
+    | S.Expr.BVal (_, x, e) ->
       let env' = Env.enter_field x env in
       let aks, e = expr env' e in
       let env, x = Env.add_var x env in
