@@ -118,12 +118,12 @@ module TVar : sig
   val id : t -> int
   val kind : t -> Kind.t
   val fresh : Kind.t -> t
-  val [@deprecated] empty : t
+  val empty : t
   val defer : unit -> t * (Kind.t -> unit)
   val clone : t -> t
   val equal : t -> t -> bool
   val compare : t -> t -> int
-  val [@deprecated] is_empty : t -> bool
+  val is_empty : t -> bool
   val pp : Format.formatter -> t -> unit
 
   module Set : Set.S with type elt = t
@@ -142,7 +142,6 @@ end = struct
     (x, UID.next ()), fun k -> Once.set x k
   ;;
 
-  let set (kc, _) k = Once.set kc k
   let clone (k, _) = k, UID.next ()
   let equal (_, x1) (_, x2) = UID.equal x1 x2
   let compare (_, x1) (_, x2) = UID.compare x1 x2
@@ -293,7 +292,7 @@ module Path = struct
   type 'a t = 'a path
 
   let pp = pp_path
-  let[@deprecated] empty = PVar TVar.empty
+  let empty = PVar TVar.empty
 
   let rec equal arg p' p =
     match p', p with
@@ -415,7 +414,7 @@ module Type = struct
       | CRecord xs -> Kind.KRecord (List.Assoc.map kind xs)
     ;;
 
-    let rec concretize f a =
+    let concretize f a =
       let rec aux path = function
         | Kind.KType -> CType (f path)
         | Kind.KRecord xs ->
@@ -578,7 +577,6 @@ module Type = struct
 end
 
 module Subst = struct
-  open Path
   open Type
 
   let freshen a rename =

@@ -175,11 +175,6 @@ module Print = struct
         | T.Type.Implicit -> Format.pp_print_string ppf "'"
         | T.Type.Explicit _ -> ()
       in
-      let is_type_arg ~path t =
-        match T.Type.view t with
-        | TSingleton t' -> T.Type.is_path path t'
-        | _ -> false
-      in
       let arg ~path ~prec ~env ppf = function
         | _, x, t when String.starts_with ~prefix:"#" (T.Var.name x) ->
           typ ~path ~prec:(prec + 1) ~env ppf t

@@ -53,10 +53,10 @@ module Value = struct
     let of_int x = VConst (CInt x)
     let of_char x = VConst (CChar x)
     let of_string x = VConst (CString x)
-    let to_bool (VConst (CBool x)) = x
-    let to_int (VConst (CInt x)) = x
-    let to_char (VConst (CChar x)) = x
-    let to_string (VConst (CString x)) = x
+    let[@ocaml.warning "-8"] to_bool (VConst (CBool x)) = x
+    let[@ocaml.warning "-8"] to_int (VConst (CInt x)) = x
+    let[@ocaml.warning "-8"] to_char (VConst (CChar x)) = x
+    let[@ocaml.warning "-8"] to_string (VConst (CString x)) = x
   end
 end
 
@@ -141,7 +141,7 @@ module Extern = struct
         [ Elaborate.Sugar.Var.eff p, v; Elaborate.Sugar.Var.eff i, v ]
     ;;
 
-    let rec decode = function
+    let decode = function
       | Lang.FOmega.Value.VConst c -> Value.VConst c
       | _ -> assert false
     ;;
@@ -226,7 +226,7 @@ module Eval = struct
        | _ -> assert false)
   ;;
 
-  let modu env (L.Expr.EMod (_, e)) = eval env e
+  let[@ocaml.warning "-8"] modu env (L.Expr.EMod (_, e)) = eval env e
 end
 
 module Session = struct

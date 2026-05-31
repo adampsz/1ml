@@ -147,7 +147,7 @@ module Implicit = struct
     let rec typ acc t =
       match view t with
       | TInfer z when T.UVar.newer level z -> f z :: acc
-      | TInfer z -> acc
+      | TInfer _ -> acc
       | TAbstr p -> path acc p
       | TPrim _ -> acc
       | TArrow (_, t1, _, t2) -> typ (typ acc t1) t2

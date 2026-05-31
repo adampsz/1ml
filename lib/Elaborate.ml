@@ -297,7 +297,7 @@ module Elab = struct
     match e with
     | S.Expr.EVar x -> [], T.Expr.EVar (Env.find_var x env)
     | S.Expr.EConst c -> [], T.Expr.EConst c
-    | S.Expr.ECond (x, e1, e2, t) ->
+    | S.Expr.ECond (x, e1, e2, _) ->
       let aks1, e1 = expr env e1
       and aks2, e2 = expr env e2 in
       let _ =

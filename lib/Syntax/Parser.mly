@@ -99,7 +99,7 @@ typ:
   | t1=typ "=>" t2=typ %prec P_ARROW { Sugar.T (TArrow (Sugar.ident (Some $loc(t1)), Sugar.as_typ t1, Explicit, Pure,   Sugar.as_typ t2) @@ $loc) }
   | t1=typ "->" t2=typ %prec P_ARROW { Sugar.T (TArrow (Sugar.ident (Some $loc(t1)), Sugar.as_typ t1, Explicit, Impure, Sugar.as_typ t2) @@ $loc) }
 
-  | "'" "(" x=var ":" t="type" ")" "=>" t2=typ %prec P_ARROW { Sugar.T (TArrow (x, TType @@ $loc(t), Implicit, Pure, Sugar.as_typ t2) @@ $loc) }
+  | "'" "(" x=var ":" t="type" ")" "=>" t2=typ %prec P_ARROW { let _ = t in Sugar.T (TArrow (x, TType @@ $loc(t), Implicit, Pure, Sugar.as_typ t2) @@ $loc) }
   | "'"     x=var                  "=>" t2=typ %prec P_ARROW { Sugar.T (TArrow (x, TType @@ $loc(x), Implicit, Pure, Sugar.as_typ t2) @@ $loc) }
 
   | t=typ "with" ps=separated_nonempty_list("and", with_param)
@@ -179,8 +179,8 @@ expr_op:
 
   | "extern" sym=STRING ":" t=typ { EExtern (sym, Sugar.as_typ t) @@ $loc }
 
-  | lhs=expr_op op="||" rhs=expr_op { Sugar.expr_or  ~span:$loc ~op:$loc(op) lhs rhs }
-  | lhs=expr_op op="&&" rhs=expr_op { Sugar.expr_and ~span:$loc ~op:$loc(op) lhs rhs }
+  | lhs=expr_op op="||" rhs=expr_op { let _ = op in Sugar.expr_or  ~span:$loc ~op:$loc(op) lhs rhs }
+  | lhs=expr_op op="&&" rhs=expr_op { let _ = op in Sugar.expr_and ~span:$loc ~op:$loc(op) lhs rhs }
 
   | lhs=expr_op op=op rhs=expr_op { Sugar.expr_op ~span:$loc ~op:$loc(op) op lhs rhs }
 ;

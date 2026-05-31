@@ -126,8 +126,6 @@ end = struct
 
     let fold_left f (x :: xs) acc = List.fold_left f acc (x :: xs)
     let fold_right f (x :: xs) acc = List.fold_right f (x :: xs) acc
-    let for_all f (x :: xs) = f x && List.for_all f xs
-    let iter f (x :: xs) = List.iter f (x :: xs)
     let to_list (x :: xs) = List.(x :: xs)
 
     let of_list = function

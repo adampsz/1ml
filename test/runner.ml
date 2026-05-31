@@ -25,7 +25,7 @@ let words s =
 ;;
 
 let parse file =
-  let rec aux acc line =
+  let aux acc line =
     match words line with
     | [ "(*"; "@prelude"; "*)" ] -> { acc with prelude = Filename.null }
     | [ "(*"; "@prelude"; prelude; "*)" ] -> { acc with prelude }
