@@ -709,13 +709,13 @@ end
 
 module Env = struct
   type t =
-    { vars : Type.t Var.Map.t
+    { vars : (Var.t * Type.t) list
     ; tvars : TVar.Set.t
     ; path : TVar.t Path.t
     }
 
-  let empty = { vars = Var.Map.empty; tvars = TVar.Set.empty; path = Path.empty }
-  let add_var x t env = { env with vars = Var.Map.add x t env.vars }
+  let empty = { vars = []; tvars = TVar.Set.empty; path = Path.empty }
+  let add_var x t env = { env with vars = (x, t) :: env.vars }
   let add_tvar a env = { env with tvars = TVar.Set.add a env.tvars }
   let enter_mod a env = { (add_tvar a env) with path = Path.PVar a }
   let enter_lam a env = { env with path = Path.PApp (env.path, a) }
@@ -723,7 +723,7 @@ module Env = struct
   let domain env = env.tvars
   let path env = env.path
   let vars env = env.vars
-  let find_var x env = Var.Map.find x env.vars
+  let find_var x env = snd (List.find (fun (y, _) -> Var.equal x y) env.vars)
   let find_tvar a env = if not (TVar.Set.mem a env.tvars) then raise Not_found
 end
 

@@ -17,7 +17,7 @@ module Env = struct
   ;;
 
   let find f env =
-    T.Var.Map.to_seq (T.Env.vars env) |> Seq.find_map (fun (x, t) -> f x t)
+    List.find_map (fun (x, t) -> f x t) (T.Env.vars env)
   ;;
 end
 
