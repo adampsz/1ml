@@ -70,7 +70,7 @@
   $ ./pp.exe "M.f int"
   M.f int
   $ ./pp.exe "{ opt: unit; x: Opt.t int }"
-  { opt: unit; x: opt int }
+  { opt: unit; x: Opt.t int }
 
   $ ./pp.exe "wrap int"
   wrap int
@@ -81,11 +81,9 @@
 
   $ ./pp.exe "{ type optint = opt int; x: opt int }"
   { optint: (= type opt int); x: optint }
-  $ ./pp.exe "{ type MAP = { type key; type map a; empty 'a: map a } }"
-  {
-    MAP:
-      (= type { key: type; map: (a: type) => type; empty: '(a: type) => map a }
-      );
-  }
   $ ./pp.exe "type"
   type
+  $ ./pp.exe "(= type { type key; type map a; empty 'a: map a })"
+  (= type { key: type; map: (a: type) => type; empty: '(a: type) => map a })
+  $ ./pp.exe "{ t: type; u: (= type t); x: t; M: { u: (); y: t } }"
+  { t: type; u: (= type t); x: u; M: { u: unit; y: t } }

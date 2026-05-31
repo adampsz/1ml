@@ -11,7 +11,17 @@ module Env = struct
       xs
   ;;
 
-  let find f env = List.find_map (fun (x, t) -> f x t) (T.Env.vars env)
+  let find f env =
+    let rec aux seen = function
+      | [] -> None
+      | (x, _) :: xs when String.Set.mem (T.Var.name x) seen -> aux seen xs
+      | (x, t) :: xs ->
+        (match f x t with
+         | Some y -> Some y
+         | None -> aux (String.Set.add (T.Var.name x) seen) xs)
+    in
+    aux String.Set.empty (T.Env.vars env)
+  ;;
 
   let at_root env =
     let root = T.TVar.Set.fold add_tvar (domain env) empty in
@@ -36,7 +46,12 @@ module Abstr = struct
   ;;
 
   let rec find_in_env p out env =
-    Env.find (fun x t -> find_in_type p (DProj (out, x)) env t) env
+    let f x t =
+      if String.starts_with ~prefix:"#" (T.Var.name x)
+      then None
+      else find_in_type p (DProj (out, x)) env t
+    in
+    Env.find f env
 
   and find_in_type p out env t =
     match T.Type.view t with
@@ -88,11 +103,7 @@ module Prec = struct
 end
 
 module Print = struct
-  let var ppf x =
-    if String.starts_with ~prefix:"#" (T.Var.name x)
-    then Format.pp_print_string ppf "_"
-    else Format.pp_print_string ppf (T.Var.name x)
-  ;;
+  let var ppf x = Format.pp_print_string ppf (T.Var.name x)
 
   let record fmt ppf = function
     | [] -> Format.pp_print_string ppf "{ }"
@@ -197,13 +208,8 @@ module Print = struct
     | TRecord ts ->
       let env = ref env in
       let entry ppf (k, v) =
-        Format.fprintf
-          ppf
-          "@[<2>%a:@ %a@]"
-          var
-          k
-          (typ ~prec:0 ~env:(Env.enter_field k !env))
-          v;
+        let pf = Format.fprintf ppf "@[<2>%a:@ %a@]" in
+        pf var k (typ ~prec:0 ~env:(Env.enter_field k !env)) v;
         env := Env.add_var k v !env
       in
       record entry ppf ts
