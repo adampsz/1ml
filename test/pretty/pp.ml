@@ -2,7 +2,7 @@ open OneMl
 module T = Lang.Typed
 
 let pp_typ env =
-  Pretty.Print.typ ~path:(Typecheck.Env.path env) ~prec:0 ~env:(Typecheck.Env.for_pp env)
+  Pretty.Print.typ ~path:(Typecheck.Env.path env) ~prec:0 ~env:(Typecheck.Env.base env)
 ;;
 
 let () =

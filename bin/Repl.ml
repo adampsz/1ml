@@ -43,7 +43,7 @@ module State = struct
   ;;
 
   let path state = OneMl.Typecheck.Env.path state.typecheck.env
-  let for_pp state = OneMl.Typecheck.Env.for_pp state.typecheck.env
+  let base state = OneMl.Typecheck.Env.base state.typecheck.env
 end
 
 let expr_as_file expr =
@@ -143,7 +143,7 @@ let eval state cmd =
       let state, ts = State.next (expr_as_file expr) state in
       let x, t = Lang.Typed.Var.assoc "#res" ts in
       let v = Eval.Env.find x state.eval in
-      print_result (State.path state) (State.for_pp state) t v;
+      print_result (State.path state) (State.base state) t v;
       state
   with
   | Diagnostic.Error.Error diag ->

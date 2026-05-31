@@ -2,33 +2,29 @@ open Util
 module T = Lang.Typed
 
 module Env = struct
-  type t =
-    { tvars : T.TVar.Set.t
-    ; vars : (T.Var.t * T.Type.t) list
-    }
+  type t = T.Env.t
 
-  let empty = { tvars = T.TVar.Set.empty; vars = [] }
-  let add_var a t env = { env with vars = (a, t) :: env.vars }
-  let add_tvar a env = { env with tvars = T.TVar.Set.add a env.tvars }
-  let with_vars vars env = { env with vars }
-  let tvars env = env.tvars
+  let empty = T.Env.empty
+  let add_var = T.Env.add_var
+  let add_tvar = T.Env.add_tvar
+  let tvars = T.Env.domain
+
+  let with_vars xs env =
+    List.fold_left
+      (fun env (x, t) -> add_var x t env)
+      (T.TVar.Set.fold add_tvar (tvars env) empty)
+      xs
+  ;;
 
   let find f env =
-    let rec aux used = function
-      | [] -> None
-      | (x, t) :: xs ->
-        (match f ~shadowed:(String.Set.mem (T.Var.name x) used) x t with
-         | Some res -> Some res
-         | None -> aux (String.Set.add (T.Var.name x) used) xs)
-    in
-    aux String.Set.empty env.vars
+    T.Var.Map.to_seq (T.Env.vars env) |> Seq.find_map (fun (x, t) -> f x t)
   ;;
 end
 
 module Abstr = struct
   type 'a display =
     | DNil
-    | DProj of 'a display * T.Var.t * bool
+    | DProj of 'a display * T.Var.t
     | DApp of 'a display * 'a
   [@@deriving show]
 
@@ -42,7 +38,7 @@ module Abstr = struct
   ;;
 
   let rec find_in_env p out env =
-    Env.find (fun ~shadowed x t -> find_in_type p (DProj (out, x, shadowed)) env t) env
+    Env.find (fun x t -> find_in_type p (DProj (out, x)) env t) env
 
   and find_in_type p out env t =
     match T.Type.view t with
@@ -59,9 +55,9 @@ module Abstr = struct
   and find_in_singleton p out env t =
     let rec generalize t = function
       | DNil -> DNil, t
-      | DProj (p, x, shadowed) ->
+      | DProj (p, x) ->
         let out, t = generalize t p in
-        DProj (out, x, shadowed), t
+        DProj (out, x), t
       | DApp (p, t1) ->
         let a, t1 = T.Type.as_module t1 in
         let c = concretize (Env.tvars env) (T.TVar.kind a) in
@@ -146,12 +142,8 @@ module Print = struct
       Prec.wrap prec (Prec.abstr ~prec p) ppf
       @@ fun ppf prec ->
       match p with
-      | Abstr.DProj (Abstr.DNil, x, shadowed) ->
-        let prefix = if shadowed then "#" else "" in
-        Format.fprintf ppf "%s%a" prefix var x
-      | Abstr.DProj (p, x, shadowed) ->
-        let prefix = if shadowed then "#" else "" in
-        Format.fprintf ppf "%a@,.%s%a" (aux ~prec) p prefix var x
+      | Abstr.DProj (Abstr.DNil, x) -> Format.fprintf ppf "%a" var x
+      | Abstr.DProj (p, x) -> Format.fprintf ppf "%a@,.%a" (aux ~prec) p var x
       | Abstr.DApp (p, a) ->
         Format.fprintf ppf "%a@ %a" (aux ~prec) p (arg ~prec:(prec + 1)) a
       | Abstr.DNil -> assert false

@@ -32,7 +32,7 @@
   $ ./pp.exe "'a => 'b => a -> b -> a"
   '(a: type) => '(b: type) => a -> b -> a
   $ ./pp.exe "'a => opt a -> a"
-  '(a: type) => opt a -> a
+  '(a: type) => Opt.t a -> a
 
   $ ./pp.exe "(int, bool)"
   (int, bool)
@@ -41,7 +41,7 @@
   $ ./pp.exe "(int, (bool, string))"
   (int, (bool, string))
   $ ./pp.exe "opt (int, bool)"
-  opt (int, bool)
+  Opt.t (int, bool)
 
   $ ./pp.exe "{}"
   { }
@@ -55,32 +55,32 @@
   { key: type; v: key }
 
   $ ./pp.exe "opt int"
-  opt int
+  Opt.t int
   $ ./pp.exe "opt (opt int)"
-  opt (opt int)
+  Opt.t (Opt.t int)
   $ ./pp.exe "opt (int -> bool)"
-  opt (int -> bool)
+  Opt.t (int -> bool)
   $ ./pp.exe "alt int bool"
-  alt int bool
+  Alt.t int bool
   $ ./pp.exe "alt (opt int) (opt bool)"
-  alt (opt int) (opt bool)
+  Alt.t (Opt.t int) (Opt.t bool)
 
   $ ./pp.exe "M.t"
   M.t
   $ ./pp.exe "M.f int"
   M.f int
   $ ./pp.exe "{ opt: unit; x: Opt.t int }"
-  { opt: unit; x: #opt int }
+  { opt: unit; x: Opt.t int }
 
   $ ./pp.exe "wrap int"
   wrap int
   $ ./pp.exe "wrap (int -> int)"
   wrap (int -> int)
   $ ./pp.exe "wrap (opt int)"
-  wrap (opt int)
+  wrap (Opt.t int)
 
   $ ./pp.exe "{ type optint = opt int; x: opt int }"
-  { optint: (= type opt int); x: optint }
+  { optint: (= type Opt.t int); x: Opt.t int }
   $ ./pp.exe "{ type MAP = { type key; type map a; empty 'a: map a } }"
   {
     MAP:

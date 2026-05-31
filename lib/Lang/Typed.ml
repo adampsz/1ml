@@ -718,8 +718,11 @@ module Env = struct
   let add_var x t env = { env with vars = Var.Map.add x t env.vars }
   let add_tvar a env = { env with tvars = TVar.Set.add a env.tvars }
   let enter_mod a env = { (add_tvar a env) with path = Path.PVar a }
-  let enter_lam a env = { (add_tvar a env) with path = Path.PApp (env.path, a) }
+  let enter_lam a env = { env with path = Path.PApp (env.path, a) }
   let enter_field x env = { env with path = Path.PProj (env.path, x) }
+  let domain env = env.tvars
+  let path env = env.path
+  let vars env = env.vars
   let find_var x env = Var.Map.find x env.vars
   let find_tvar a env = if not (TVar.Set.mem a env.tvars) then raise Not_found
 end

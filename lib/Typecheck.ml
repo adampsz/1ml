@@ -16,7 +16,6 @@ module Env : sig
   val add : T.Var.t -> T.Type.t -> t -> t
   val add_tvar : T.TVar.t -> t -> t
   val add_mod : T.Var.t -> T.Type.t -> t -> t
-  val add_record : (T.Var.t * T.Type.t) list -> t -> t
   val find : ?span:T.Type.span -> string -> t -> T.Var.t * T.Type.t
   val enter_mod : T.TVar.t -> t -> t
   val enter_lam : T.TVar.t -> t -> t
@@ -25,66 +24,53 @@ module Env : sig
   val domain : t -> T.TVar.Set.t
   val uvar : t -> T.Type.t
   val eff : T.Type.t -> t -> T.Effect.t
-  val for_subtype : t -> t * T.Type.Cons.t option
-  val for_pp : t -> Pretty.Env.t
-  val for_invariant : t -> T.Env.t
+  val base : t -> T.Env.t
 end = struct
   type t =
-    { path : T.TVar.t T.Path.t
-    ; vars : (T.Var.t * T.Type.t) String.Map.t
-    ; tvars : T.TVar.Set.t
+    { base : T.Env.t
+    ; names : T.Var.t String.Map.t
     }
 
-  let empty = { path = T.Path.empty; vars = String.Map.empty; tvars = T.TVar.Set.empty }
-  let add x t env = { env with vars = String.Map.add (T.Var.name x) (x, t) env.vars }
-  let add_tvar a env = { env with tvars = T.TVar.Set.add a env.tvars }
+  let empty = { base = T.Env.empty; names = String.Map.empty }
+
+  let add x t env =
+    { base = T.Env.add_var x t env.base
+    ; names = String.Map.add (T.Var.name x) x env.names
+    }
+  ;;
+
+  let add_tvar a env = { env with base = T.Env.add_tvar a env.base }
 
   let add_mod x t env =
     let a, t = T.Type.as_module t in
     add_tvar a env |> add x t
   ;;
 
-  let add_record xs env = List.fold_left (fun env (x, t) -> add x t env) env xs
-
   let find ?span x env =
-    match String.Map.find_opt x env.vars with
-    | Some (x, t) ->
-      let t = T.Subst.typ T.Subst.id t in
+    match String.Map.find_opt x env.names with
+    | Some x ->
+      let t = T.Subst.typ T.Subst.id (T.Env.find_var x env.base) in
       debug (fun m -> m ~header:"env" "find %a ↦ %a" T.Var.pp x T.Type.pp t);
       x, t
     | None -> Diagnostic.Error.error ?span "unbound variable `%s'" x
   ;;
 
-  let enter_mod a env = { (add_tvar a env) with path = T.Path.PVar a }
-  let enter_lam a env = { env with path = PApp (env.path, a) }
-  let enter_field x env = { env with path = PProj (env.path, x) }
-  let domain env = env.tvars
-  let path env = env.path
+  let enter_mod a env = { env with base = T.Env.enter_mod a env.base }
+  let enter_lam a env = { env with base = T.Env.enter_lam a env.base }
+  let enter_field x env = { env with base = T.Env.enter_field x env.base }
+  let domain env = T.Env.domain env.base
+  let path env = T.Env.path env.base
   let uvar env = TInfer (T.UVar.fresh (domain env)) |> wrap
-  let eff t env = T.Type.eff (T.Path.var env.path) t
-  let for_subtype env = env, T.Type.Cons.empty
+  let eff t env = T.Type.eff (T.Path.var (path env)) t
 
-  let for_pp env =
-    Pretty.Env.empty
-    |> T.TVar.Set.fold Pretty.Env.add_tvar env.tvars
-    |> String.Map.fold (fun _ (x, t) -> Pretty.Env.add_var x t) env.vars
-  ;;
-
-  let for_invariant (env : t) =
-    T.Env.
-      { path = env.path
-      ; tvars = env.tvars
-      ; vars =
-          String.Map.fold (fun _ (x, t) -> T.Var.Map.add x t) env.vars T.Var.Map.empty
-      }
-  ;;
+  let base env = env.base
 end
 
 module Error = struct
   open Diagnostic.Error
 
   let pp_typ env ppf t =
-    Pretty.Print.typ ~path:(Env.path env) ~prec:0 ~env:(Env.for_pp env) ppf t
+    Pretty.Print.typ ~path:(Env.path env) ~prec:0 ~env:(Env.base env) ppf t
   ;;
 
   let missing_field ?span x = error ?span "record is missing field `%s'" x
@@ -241,6 +227,7 @@ module Subtype = struct
   module Env = struct
     include Env
 
+    let of_env env = env, T.Type.Cons.empty
     let enter_mod a env = enter_mod a env, T.Type.Cons.empty
     let enter_field a (env, acc) = enter_field a env, acc
     let enter_lam a (env, acc) = enter_lam a env, acc
@@ -496,7 +483,7 @@ module Check = struct
       let xs, t_ = proj env xs t in
       let env_ = List.fold_left (fun e x -> Env.enter_field x e) env xs in
       let k_', t_' = typ env_ t_' in
-      let c, _ = Subtype.typ (Env.for_subtype env_) t_' t_ in
+      let c, _ = Subtype.typ (Subtype.Env.of_env env_) t_' t_ in
       set_kind xs k_' k, T.Subst.typ (T.Subst.one_opt (T.Path.var (Env.path env)) c) t
     | S.TStruct xs ->
       let _, xs = List.fold_left_map decl env xs in
@@ -543,7 +530,7 @@ module Check = struct
         | None, TRecord xs -> [], xs
         | _ -> Error.expected_record_type ?span env t
       in
-      let env = Env.add_record ts env in
+      let env = List.fold_left (fun env (x, t) -> Env.add x t env) env ts in
       env, (ks, if vis = Public then ts else [])
 
   and expr env e =
@@ -572,8 +559,8 @@ module Check = struct
       let eff1, t1, e1 = modu_expr env e1
       and eff2, t2, e2 = modu_expr env e2
       and tmod = modu_typ env t in
-      let _, f1 = Subtype.typ (Env.for_subtype env) t1 tmod
-      and _, f2 = Subtype.typ (Env.for_subtype env) t2 tmod in
+      let _, f1 = Subtype.typ (Subtype.Env.of_env env) t1 tmod
+      and _, f2 = Subtype.typ (Subtype.Env.of_env env) t2 tmod in
       let k, t, e = path_prepend env tmod in
       let eff = Env.eff t env in
       let eff = T.Effect.join eff (T.Effect.join eff1 eff2) in
@@ -638,10 +625,7 @@ module Check = struct
         | _ -> Error.expected_function_type ?span:(S.Node.span x) env t
       in
       let x', t1' = Env.find ?span:(S.Node.span x') (S.Node.data x') env in
-      let tc, f =
-        let env, _ = Env.for_subtype env in
-        Subtype.typ (Subtype.Env.enter_mod a1 env) t1' t1
-      in
+      let tc, f = Subtype.typ (Subtype.Env.enter_mod a1 env) t1' t1 in
       let k2, t2, e =
         match eff with
         | Impure -> path_prepend env (T.Subst.typ (T.Subst.one_opt a1 tc) t2)
@@ -656,7 +640,7 @@ module Check = struct
     | S.ESeal (x, t) ->
       let xv, t' = Env.find ?span:(S.Node.span x) (S.Node.data x) env
       and k, t = typ env t in
-      let c, f = Subtype.typ (Env.for_subtype env) t' t in
+      let c, f = Subtype.typ (Subtype.Env.of_env env) t' t in
       let c = Option.value c ~default:(T.Type.CRecord []) in
       let e = T.Expr.ESeal (f (EVar xv), c, t) in
       k, Env.eff t env, t, e
@@ -668,7 +652,7 @@ module Check = struct
         | _ -> Error.expected_wrapped_type ?span:(S.Node.span t) env t
       in
       let xv, t' = Env.find ?span:(S.Node.span x) (S.Node.data x) env in
-      let _, f = Subtype.typ (Env.for_subtype env) t' t in
+      let _, f = Subtype.typ (Subtype.Env.of_env env) t' t in
       let e = T.Expr.EWrap (f (EVar xv), TWrapped t |> wrap ?span) in
       None, T.Effect.Pure, TWrapped t |> wrap ?span, e
     | S.EUnwrap (x, t) ->
@@ -689,7 +673,7 @@ module Check = struct
           t2
         | _ -> Error.expected_wrapped_type ?span:(S.Node.span x) env t1
       in
-      let _, f = Subtype.typ (Env.for_subtype env) t1 t2 in
+      let _, f = Subtype.typ (Subtype.Env.of_env env) t1 t2 in
       let k2, t2, e2 = path_prepend env t2 in
       let e = e2 (f (T.Expr.EUnwrap (inst (EVar xv)))) in
       k2, Env.eff t2 env, t2, e
@@ -722,7 +706,7 @@ module Check = struct
         | None, TRecord xs -> [], xs
         | _ -> Error.expected_record_type ?span env t
       in
-      let env = Env.add_record ts env in
+      let env = List.fold_left (fun env (x, t) -> Env.add x t env) env ts in
       let e = T.Expr.BIncl (vis, e, ts) in
       env, (ks, eff, (if vis = Public then ts else []), e)
 
@@ -753,7 +737,7 @@ module Check = struct
     let level = T.UVar.stamp () in
     let _, t, e = modu_expr env (S.Node.make (Lang.Surface.EStruct file)) in
     Implicit.default level t e;
-    let _ = T.Invariant.expr (Env.for_invariant env) e in
+    let _ = T.Invariant.expr (Env.base env) e in
     e
   ;;
 end
