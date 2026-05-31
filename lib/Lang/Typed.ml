@@ -750,7 +750,7 @@ module Invariant = struct
       (fun _ m -> m ~header:"typ" "ok")
     @@ fun () ->
     match Type.view t with
-    | TInfer _ -> (* fail () *) ()
+    | TInfer _ -> fail ()
     | TAbstr p -> path env p
     | TPrim _ -> ()
     | TArrow (x, t1, _, t2) ->
@@ -844,9 +844,9 @@ module Invariant = struct
        | TWrapped t -> t
        | _ -> fail ())
     | ESeal (e, tc, s) ->
-      let a, t =  Type.as_module (expr env e) in
+      let a, t = Type.as_module (expr env e) in
       cons (Env.add_tvar a env) tc;
-      let a = Path.var (env.path) in
+      let a = Path.var env.path in
       invariant (Equal.typ (Subst.typ (Subst.one a tc) s) t);
       s
     | EMod (a, e) ->

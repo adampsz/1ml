@@ -157,37 +157,69 @@ module Implicit = struct
     | _ -> assert false
   ;;
 
-  let generalize level t =
+  let infers level f t e =
     let rec typ acc t =
       match view t with
-      | TInfer z when T.UVar.newer level z ->
-        let a = T.TVar.fresh T.Kind.KType in
-        T.UVar.set z (TAbstr (PVar a));
-        let t1 = TInfer z |> wrap in
-        let t1 = TMod (a, TSingleton t1 |> wrap) |> wrap in
-        t1 :: acc
-      | TInfer _ -> acc
+      | TInfer z when T.UVar.newer level z -> f z :: acc
+      | TInfer z -> acc
       | TAbstr p -> path acc p
       | TPrim _ -> acc
       | TArrow (_, t1, _, t2) -> typ (typ acc t1) t2
-      | TRecord ts -> List.fold_left (fun xs (_, t) -> typ xs t) acc ts
+      | TRecord ts -> List.fold_left (fun acc (_, t) -> typ acc t) acc ts
       | TSingleton t -> typ acc t
       | TWrapped t -> typ acc t
       | TMod (_, t) -> typ acc t
     and path acc = function
       | T.Path.PVar _ -> acc
       | T.Path.PProj (p, _) -> path acc p
-      | T.Path.PApp (p, x) -> path (cons acc x) p
+      | T.Path.PApp (p, c) -> cons (path acc p) c
     and cons acc = function
       | T.Type.CType t -> typ acc t
-      | T.Type.CLam (_, t) -> cons acc t
-      | T.Type.CRecord ts -> List.fold_left (fun xs (_, t) -> cons xs t) acc ts
+      | T.Type.CLam (_, c) -> cons acc c
+      | T.Type.CRecord ts -> List.fold_left (fun acc (_, c) -> cons acc c) acc ts
+    and expr acc e =
+      match e with
+      | T.Expr.EVar _ | T.Expr.EConst _ -> acc
+      | T.Expr.ECond (_, e1, e2, t) -> typ (expr (expr acc e1) e2) t
+      | T.Expr.EStruct (bs, ts) ->
+        List.fold_left (fun acc (_, t) -> typ acc t) (List.fold_left bind acc bs) ts
+      | T.Expr.EProj (e, _, t) -> typ (expr acc e) t
+      | T.Expr.EFun (_, t, _, e) -> expr (typ acc t) e
+      | T.Expr.EApp (e1, tc, _, e2) -> expr (cons (expr acc e1) tc) e2
+      | T.Expr.EType t -> typ acc t
+      | T.Expr.EExtern (_, t) -> typ acc t
+      | T.Expr.EWrap (e, t) -> typ (expr acc e) t
+      | T.Expr.EUnwrap e -> expr acc e
+      | T.Expr.ESeal (e, c, t) -> typ (cons (expr acc e) c) t
+      | T.Expr.EMod (_, e) -> expr acc e
+      | T.Expr.EUse e -> expr acc e
+    and bind acc = function
+      | T.Expr.BVal (_, _, e) -> expr acc e
+      | T.Expr.BIncl (_, e, ts) ->
+        List.fold_left (fun acc (_, t) -> typ acc t) (expr acc e) ts
     in
-    let ts = typ [] t in
-    let xs = List.mapi (fun i t1 -> T.Var.fresh (NameSeq.nth i), t1) (List.rev ts) in
-    let t = List.fold_right (fun (x, t1) t -> TArrow (x, t1, Implicit, t) |> wrap) xs t in
-    let g e = List.fold_right (fun (x, t1) e -> T.Expr.EFun (x, t1, Implicit, e)) xs e in
-    g, t
+    expr (typ [] t) e
+  ;;
+
+  let generalize level eff e t =
+    let resolve z =
+      let a = T.TVar.fresh T.Kind.KType in
+      T.UVar.set z (TAbstr (PVar a) : T.Type.view);
+      TMod (a, TSingleton (TInfer z |> wrap) |> wrap) |> wrap
+    in
+    match eff with
+    | T.Effect.Impure -> e, t
+    | T.Effect.Pure ->
+      let vars = infers level resolve t e |> List.rev in
+      let xs = List.mapi (fun i t1 -> T.Var.fresh (NameSeq.nth i), t1) vars in
+      ( List.fold_right (fun (x, t1) e -> T.Expr.EFun (x, t1, Implicit, e)) xs e
+      , List.fold_right (fun (x, t1) t -> TArrow (x, t1, Implicit, t) |> wrap) xs t )
+  ;;
+
+  let default level t e =
+    let unit = TPrim PUnit |> wrap in
+    let f z = T.Type.resolve z unit in
+    ignore (infers level f t e)
   ;;
 
   let instantiate env t =
@@ -677,10 +709,10 @@ module Check = struct
       let x = field x in
       let level = T.UVar.stamp () in
       let k, eff, t, e = expr (Env.enter_field x env) e in
-      let gen, t = Implicit.generalize level t in
+      let e, t = Implicit.generalize level eff e t in
       let ks = Option.fold k ~none:[] ~some:(fun k -> [ x, k ]) in
       let ts = if vis = Public then [ x, t ] else [] in
-      Env.add x t env, (ks, eff, ts, T.Expr.BVal (vis, x, gen e))
+      Env.add x t env, (ks, eff, ts, T.Expr.BVal (vis, x, e))
     | S.BIncl (vis, e) ->
       let span = S.Node.span e in
       let k, eff, t, e = expr env e in
@@ -718,7 +750,9 @@ module Check = struct
          let expr = Format.with_max_boxes Int.max_int expr in
          m ~header:"file" "%a" expr t)
     @@ fun () ->
-    let _, _, e = modu_expr env (S.Node.make (Lang.Surface.EStruct file)) in
+    let level = T.UVar.stamp () in
+    let _, t, e = modu_expr env (S.Node.make (Lang.Surface.EStruct file)) in
+    Implicit.default level t e;
     let _ = T.Invariant.expr (Env.for_invariant env) e in
     e
   ;;
