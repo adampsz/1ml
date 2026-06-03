@@ -49,7 +49,7 @@ end = struct
   let find ?span x env =
     match String.Map.find_opt x env.names with
     | Some x ->
-      let t = T.Subst.typ T.Subst.id (T.Env.find_var x env.base) in
+      let t = T.Rename.typ (T.Env.find_var x env.base) in
       debug (fun m -> m ~header:"env" "find %a ↦ %a" T.Var.pp x T.Type.pp t);
       x, t
     | None -> Diagnostic.Error.error ?span "unbound variable `%s'" x
@@ -210,8 +210,8 @@ module Implicit = struct
       | TArrow (_, t1, Implicit, t2) ->
         let a, t1 = T.Type.as_module t1 in
         let tc = concretize env (T.TVar.kind a) in
-        let t1 = T.Subst.typ (T.Subst.one a tc) t1
-        and t2 = T.Subst.typ (T.Subst.one a tc) t2 in
+        let t1 = T.Subst.typ a (T.Subst.one tc) t1
+        and t2 = T.Subst.typ a (T.Subst.one tc) t2 in
         aux ((fun e -> T.Expr.EApp (inst e, tc, Implicit, materialize env t1)), t2)
       | _ -> inst, t
     in
@@ -227,7 +227,7 @@ module Subtype = struct
     let enter_mod a env = enter_mod a env, T.Type.Cons.empty
     let enter_field a (env, acc) = enter_field a env, acc
     let enter_lam a (env, acc) = enter_lam a env, acc
-    let subst (env, acc) = T.Subst.one_opt (T.Path.var (Env.path env)) acc
+    let subst (env, acc) t = T.Subst.typ (T.Path.var (Env.path env)) (T.Subst.one_opt acc) t
   end
 
   let chain context f =
@@ -304,7 +304,7 @@ module Subtype = struct
     (* Subtyping *)
     | TAbstr p', TAbstr p when T.Path.equal (equal env) p' p -> acc, Fun.id
     | _, TAbstr p ->
-      let t = T.Subst.typ (Env.subst (env, acc)) t in
+      let t = Env.subst (env, acc) t in
       (match view t with
        | TAbstr p' when T.Path.equal (equal env) p' p -> Error.not_assignable env t' t
        | _ -> typ (env, acc) t' t)
@@ -326,7 +326,7 @@ module Subtype = struct
         acc, T.Expr.BVal (Public, x, c (EVar x'))
       in
       let acc, bs = List.fold_left_map aux acc xs in
-      let xs = List.map (fun (x, t) -> x, T.Subst.typ (Env.subst (env, acc)) t) xs in
+      let xs = List.map (fun (x, t) -> x, Env.subst (env, acc) t) xs in
       acc, fun e -> T.Expr.EStruct (BIncl (Private, e, xs') :: bs, xs)
     | TRecord _, _ -> Error.not_assignable env t' t
     | TArrow (_, t1', Explicit eff', t2'), TArrow (x, t1, Explicit eff, t2)
@@ -335,18 +335,18 @@ module Subtype = struct
       @@ fun () ->
       let (a1', t1'), (a1, t1) = T.Type.as_module t1', T.Type.as_module t1 in
       let env = Env.add_tvar a1 env in
-      let t1 = T.Subst.typ (Env.subst (env, acc)) t1 in
+      let t1 = Env.subst (env, acc) t1 in
       let x1 = T.Var.clone x in
       let tc1, f1 =
         chain (fun cause -> Error.in_function_argument ~cause ())
         @@ fun () -> typ (Env.enter_mod a1' (Env.add_tvar a1 env)) t1 t1'
       in
-      let t2' = T.Subst.typ (T.Subst.one_opt a1' tc1) t2' in
+      let t2' = T.Subst.typ a1' (T.Subst.one_opt tc1) t2' in
       let acc, f2 =
         chain (fun cause -> Error.in_function_return ~cause ())
         @@ fun () ->
         match eff with
-        | Impure -> typ (env, acc) t2' (T.Subst.typ (Env.subst (env, acc)) t2)
+        | Impure -> typ (env, acc) t2' (Env.subst (env, acc) t2)
         | Pure -> typ (Env.enter_lam a1 (env, acc)) t2' t2
       in
       let f e =
@@ -362,7 +362,7 @@ module Subtype = struct
     | TSingleton ti', TSingleton ti ->
       chain (fun cause -> Error.not_assignable ~cause env t' t)
       @@ fun () ->
-      let ti = T.Subst.typ (Env.subst (env, acc)) ti in
+      let ti = Env.subst (env, acc) ti in
       let chain = chain (fun cause -> Error.in_singleton ~cause ()) in
       let _ = chain @@ fun () -> typ (env, acc) ti' ti
       and _ = chain @@ fun () -> typ (env, acc) ti ti' in
@@ -370,7 +370,7 @@ module Subtype = struct
     | TWrapped ti', TWrapped ti ->
       chain (fun cause -> Error.not_assignable ~cause env t' t)
       @@ fun () ->
-      let ti = T.Subst.typ (Env.subst (env, acc)) ti in
+      let ti = Env.subst (env, acc) ti in
       let chain = chain (fun cause -> Error.in_wrapped ~cause ()) in
       let _ = chain @@ fun () -> typ (env, acc) ti' ti
       and _ = chain @@ fun () -> typ (env, acc) ti ti' in
@@ -389,7 +389,7 @@ module Subtype = struct
        | Diagnostic.Error.Error _ -> false)
     | CType _, _ -> false
     | CLam (a', c'), CLam (a, c) ->
-      let c' = T.Subst.cons ~rename:(T.TVar.Map.singleton a' a) T.Subst.id c' in
+      let c' = T.Rename.cons ~rename:(T.Rename.one a' a) c' in
       equal (Env.add_tvar a env) c' c
     | CLam _, _ -> false
     | CRecord ts', CRecord ts ->
@@ -416,12 +416,7 @@ module Check = struct
       Error.expected_record_type ?span env t
   ;;
 
-  let path_map a f t =
-    let aux p =
-      if T.TVar.equal (T.Path.var p) a then Some (TAbstr (f p) |> wrap) else None
-    in
-    T.Subst.typ aux t
-  ;;
+  let path_map a f t = T.Subst.typ a (fun p -> TAbstr (f p) |> wrap) t
 
   let path_prepend env t =
     match view t with
@@ -483,7 +478,7 @@ module Check = struct
       let env_ = List.fold_left (fun e x -> Env.enter_field x e) env xs in
       let k_', t_' = typ env_ t_' in
       let c, _ = Subtype.typ (Subtype.Env.of_env env_) t_' t_ in
-      set_kind xs k_' k, T.Subst.typ (T.Subst.one_opt (T.Path.var (Env.path env)) c) t
+      set_kind xs k_' k, T.Subst.typ (T.Path.var (Env.path env)) (T.Subst.one_opt c) t
     | S.TStruct xs ->
       let _, xs = List.fold_left_map decl env xs in
       let ks = List.concat_map (fun (ks, _) -> ks) xs
@@ -627,8 +622,8 @@ module Check = struct
       let tc, f = Subtype.typ (Subtype.Env.enter_mod a1 env) t1' t1 in
       let k2, t2, e =
         match eff with
-        | Impure -> path_prepend env (T.Subst.typ (T.Subst.one_opt a1 tc) t2)
-        | Pure -> None, T.Subst.typ (T.Subst.one_opt a1 tc) t2, Fun.id
+        | Impure -> path_prepend env (T.Subst.typ a1 (T.Subst.one_opt tc) t2)
+        | Pure -> None, T.Subst.typ a1 (T.Subst.one_opt tc) t2, Fun.id
       in
       let tc = Option.value tc ~default:(T.Type.CRecord []) in
       let e = e (T.Expr.EApp (inst (EVar xv), tc, Explicit eff, f (EVar x'))) in

@@ -576,7 +576,7 @@ module Type = struct
   ;;
 end
 
-module Subst = struct
+module Rename = struct
   open Type
 
   let freshen a rename =
@@ -584,54 +584,81 @@ module Subst = struct
     a', TVar.Map.add a a' rename
   ;;
 
-  let rec typ ?(rename = TVar.Map.empty) f t =
+  let rec typ rename t =
     let span = Type.span t in
     match Type.view t with
     | TInfer _ -> t
-    | TAbstr p -> path ?span ~rename f p
+    | TAbstr p -> path ?span rename p
     | TPrim _ -> t
     | TArrow (x, t1, eff, t2) ->
       let a, t1 = as_module t1 in
       let a, rename = freshen a rename in
-      let t = TArrow (x, as_type a (typ ~rename f t1), eff, typ ~rename f t2) in
+      let t = TArrow (x, as_type a (typ rename t1), eff, typ rename t2) in
       Type.wrap ?span t
-    | TRecord xs ->
-      TRecord (List.map (fun (x, t) -> x, typ ~rename f t) xs) |> Type.wrap ?span
-    | TSingleton t -> TSingleton (typ ~rename f t) |> Type.wrap ?span
-    | TWrapped t -> TWrapped (typ ~rename f t) |> Type.wrap ?span
+    | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ rename t) xs) |> Type.wrap ?span
+    | TSingleton t -> TSingleton (typ rename t) |> Type.wrap ?span
+    | TWrapped t -> TWrapped (typ rename t) |> Type.wrap ?span
     | TMod (a, t) ->
       let a, rename = freshen a rename in
-      TMod (a, typ ~rename f t) |> Type.wrap ?span
+      TMod (a, typ rename t) |> Type.wrap ?span
 
-  and cons ?(rename = TVar.Map.empty) f = function
-    | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons ~rename f t) xs)
-    | CLam (a, t) -> freshen a rename |> fun (a, rename) -> CLam (a, cons ~rename f t)
-    | CType t -> CType (typ ~rename f t)
+  and cons rename = function
+    | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons rename t) xs)
+    | CLam (a, t) -> freshen a rename |> fun (a, rename) -> CLam (a, cons rename t)
+    | CType t -> CType (typ rename t)
 
-  and path ?span ?(rename = TVar.Map.empty) f p =
-    let a, r = Path.rev_map (cons ~rename f) p in
-    match TVar.Map.find_opt a rename with
-    | Some a -> TAbstr (Path.Rev.rev a r) |> Type.wrap ?span
-    | None ->
-      (match f (Path.Rev.rev a r) with
-       | Some t -> t
-       | None -> TAbstr (Path.Rev.rev a r) |> Type.wrap ?span)
+  and path ?span rename p =
+    let a, r = Path.rev_map (cons rename) p in
+    let a = Option.value (TVar.Map.find_opt a rename) ~default:a in
+    TAbstr (Path.Rev.rev a r) |> Type.wrap ?span
   ;;
 
-  let id _ = None
+  let typ ?(rename = TVar.Map.empty) t = typ rename t
+  let cons ?(rename = TVar.Map.empty) c = cons rename c
+  let one a' a = TVar.Map.singleton a' a
+end
 
-  let rec one a c p =
-    if TVar.equal (Path.var p) a
-    then Type.Cons.lookup (fun a t c -> cons (one a t) c) p c
-    else None
+module Subst = struct
+  open Type
+
+  let rec typ a f t =
+    let span = Type.span t in
+    match Type.view t with
+    | TInfer _ -> t
+    | TAbstr p -> path ?span a f p
+    | TPrim _ -> t
+    | TArrow (x, t1, eff, t2) ->
+      let b, t1 = as_module t1 in
+      TArrow (x, as_type b (typ a f t1), eff, typ a f t2) |> Type.wrap ?span
+    | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ a f t) xs) |> Type.wrap ?span
+    | TSingleton t -> TSingleton (typ a f t) |> Type.wrap ?span
+    | TWrapped t -> TWrapped (typ a f t) |> Type.wrap ?span
+    | TMod (b, t) -> TMod (b, typ a f t) |> Type.wrap ?span
+
+  and cons a f = function
+    | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons a f t) xs)
+    | CLam (b, t) -> CLam (b, cons a f t)
+    | CType t -> CType (typ a f t)
+
+  and path ?span a f p =
+    let b, r = Path.rev_map (cons a f) p in
+    let p = Path.Rev.rev b r in
+    if TVar.equal b a then f p else TAbstr p |> Type.wrap ?span
   ;;
 
-  let one_opt a = Option.fold ~none:id ~some:(one a)
+  let rec one c p =
+    match Type.Cons.lookup (fun a t c -> cons a (one t) c) p c with
+    | Some t -> t
+    | None -> TAbstr p |> Type.wrap
+  ;;
+
+  let one_opt = function
+    | Some c -> one c
+    | None -> fun p -> TAbstr p |> Type.wrap
+  ;;
 end
 
 module Equal = struct
-  let rename (f : ?rename:_ -> _) a' a = f ~rename:(TVar.Map.singleton a' a) Subst.id
-
   let rec typ ?(unify = false) t' t =
     match Type.view t', Type.view t with
     | (TInfer z, v | v, TInfer z) when unify -> Type.resolve z (Type.wrap v)
@@ -643,9 +670,10 @@ module Equal = struct
     | TPrim _, _ -> false
     | TArrow (_, t1', eff', t2'), TArrow (_, t1, eff, t2) ->
       let (a', t1'), (a, t1) = Type.as_module t1', Type.as_module t1 in
+      let rename = Rename.one a' a in
       eff' = eff
-      && typ ~unify (rename Subst.typ a' a t1') t1
-      && typ ~unify (rename Subst.typ a' a t2') t2
+      && typ ~unify (Rename.typ ~rename t1') t1
+      && typ ~unify (Rename.typ ~rename t2') t2
     | TArrow _, _ -> false
     | TRecord ts', TRecord ts ->
       let eq (x', t') (x, t) = Var.name x' = Var.name x && typ ~unify t' t in
@@ -655,14 +683,14 @@ module Equal = struct
     | TSingleton _, _ -> false
     | TWrapped t', TWrapped t -> typ ~unify t' t
     | TWrapped _, _ -> false
-    | TMod (a', t'), TMod (a, t) -> typ ~unify (rename Subst.typ a' a t') t
+    | TMod (a', t'), TMod (a, t) -> typ ~unify (Rename.typ ~rename:(Rename.one a' a) t') t
     | TMod _, _ -> false
 
   and cons ?unify c' c =
     match c', c with
     | CType t', CType t -> typ ?unify t t'
     | CType _, _ -> false
-    | CLam (a', c'), CLam (a, c) -> cons ?unify (rename Subst.cons a' a c') c
+    | CLam (a', c'), CLam (a, c) -> cons ?unify (Rename.cons ~rename:(Rename.one a' a) c') c
     | CLam _, _ -> false
     | CRecord ts', CRecord ts ->
       List.equal (fun (x', c') (x, c) -> Var.equal x' x && cons ?unify c' c) ts' ts
@@ -828,8 +856,8 @@ module Invariant = struct
       let t1' = expr env e1 in
       cons (Env.add_tvar a env) tc;
       invariant (eff = eff');
-      invariant (Equal.typ (Subst.typ (Subst.one a tc) t1) t1');
-      Subst.typ (Subst.one a tc) t2
+      invariant (Equal.typ (Subst.typ a (Subst.one tc) t1) t1');
+      Subst.typ a (Subst.one tc) t2
     | EType t ->
       typ env t;
       TSingleton t |> Type.wrap
@@ -848,19 +876,14 @@ module Invariant = struct
       let a, t = Type.as_module (expr env e) in
       cons (Env.add_tvar a env) tc;
       let a, s = Type.as_module s in
-      invariant (Equal.typ (Subst.typ (Subst.one a tc) s) t);
+      invariant (Equal.typ (Subst.typ a (Subst.one tc) s) t);
       Type.as_type a s
     | EMod (a, e) ->
       invariant (not (TVar.is_empty a));
       let t = expr (Env.enter_mod a env) e in
       TMod (a, t) |> Type.wrap
     | EUse e ->
-      let path_map a f t =
-        let aux p =
-          if TVar.equal (Path.var p) a then Some (TAbstr (f p) |> Type.wrap) else None
-        in
-        Subst.typ aux t
-      in
+      let path_map a f t = Subst.typ a (fun p -> TAbstr (f p) |> Type.wrap) t in
       (match expr env e |> Type.view with
        | TMod (a, t) -> path_map a (Path.prepend (Type.path_to_abstr env.Env.path)) t
        | _ -> fail ())

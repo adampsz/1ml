@@ -74,8 +74,8 @@ module Abstr = struct
       | DApp (p, t1) ->
         let a, t1 = T.Type.as_module t1 in
         let c = concretize (Env.domain env) (T.TVar.kind a) in
-        let out, t = generalize (T.Subst.typ (T.Subst.one a c) t) p in
-        DApp (out, T.Subst.typ (T.Subst.one a c) t1), t
+        let out, t = generalize (T.Subst.typ a (T.Subst.one c) t) p in
+        DApp (out, T.Subst.typ a (T.Subst.one c) t1), t
     in
     let out, t = generalize t out in
     if T.Equal.typ ~unify:true t (TAbstr p |> T.Type.wrap) then Some out else None
