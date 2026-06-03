@@ -37,13 +37,20 @@ let parse file =
   In_channel.fold_lines aux meta (In_channel.open_text file)
 ;;
 
-let run cmd file =
+let run cmd extra file =
   match parse file with
   | { skip = true; _ } -> 0
   | { prelude; _ } ->
     let prelude = filename_join (Filename.dirname file) prelude in
-    let args = [ "--f-omega"; "--prelude"; prelude; file ] in
+    let args = extra @ [ "--prelude"; prelude; file ] in
     Sys.command (Filename.quote_command cmd args)
 ;;
 
-let _ = exit (run Sys.argv.(1) Sys.argv.(2))
+let _ =
+  let argv = Sys.argv in
+  let n = Array.length argv in
+  let cmd = argv.(1) in
+  let file = argv.(n - 1) in
+  let extra = Array.to_list (Array.sub argv 2 (n - 3)) in
+  exit (run cmd extra file)
+;;
