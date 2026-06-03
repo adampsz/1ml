@@ -378,8 +378,8 @@ module Subtype = struct
     | TSingleton _, _ -> Error.not_assignable env t' t
     | TWrapped _, _ -> Error.not_assignable env t' t
 
-  and equal env t' t =
-    match t', t with
+  and equal env c' c =
+    match c', c with
     | CType t', CType t ->
       (try
          let _ = typ (env, T.Type.Cons.empty) t' t
@@ -387,7 +387,15 @@ module Subtype = struct
          true
        with
        | Diagnostic.Error.Error _ -> false)
-    | _, _ -> failwith "todo: equality"
+    | CType _, _ -> false
+    | CLam (a', c'), CLam (a, c) ->
+      let c' = T.Subst.cons ~rename:(T.TVar.Map.singleton a' a) T.Subst.id c' in
+      equal (Env.add_tvar a env) c' c
+    | CLam _, _ -> false
+    | CRecord ts', CRecord ts ->
+      let eq (x', c') (x, c) = T.Var.equal x' x && equal env c' c in
+      List.equal eq ts' ts
+    | CRecord _, _ -> false
   ;;
 end
 

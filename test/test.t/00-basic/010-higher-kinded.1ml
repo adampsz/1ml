@@ -1,0 +1,23 @@
+id      (a: type) = a;
+compose (f: type => type) (g: type => type) (a: type) = f (g a);
+twice   (f: type => type) = compose f f;
+
+x : compose id id int = 0;
+y : twice id int = x;
+z : id (twice id int) = y;
+
+do Assert.eq x z;
+
+Box = {
+  type box (f: type => type) = f int;
+  flat : box id = 0;
+  deep : box (twice id) = 1;
+} :> {
+  type box (f: type => type);
+  flat : box id;
+  deep : box (twice id);
+};
+
+reflat (b: Box.box (compose id id)) = b;
+
+do Assert.eq Box.flat (reflat Box.flat);

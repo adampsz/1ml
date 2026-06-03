@@ -11,6 +11,7 @@
   : 00-basic/007-implicit.1ml
   : 00-basic/008-with.1ml
   : 00-basic/009-multiple-types.1ml
+  : 00-basic/010-higher-kinded.1ml
   : 01-examples/001-typeof.1ml
   : 01-examples/002-detached-type.1ml
   : 01-examples/003-type-manipulation.1ml
