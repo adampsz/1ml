@@ -11,39 +11,33 @@ type cmd =
 
 module State = struct
   type t =
-    { history : string list
-    ; typecheck : OneMl.Typecheck.Session.state
+    { typecheck : OneMl.Typecheck.Session.state
     ; eval : OneMl.Eval.Session.state
     }
 
   let empty =
-    { history = []
-    ; typecheck = OneMl.Typecheck.Session.empty
-    ; eval = OneMl.Eval.Session.empty
-    }
-  ;;
-
-  let append input state = { state with history = input :: state.history }
-  let filename state = Printf.sprintf "<repl-%d>" (List.length state.history + 1)
-
-  let nth_back_opt i xs =
-    let i = List.length xs - i in
-    if i < 0 then None else List.nth_opt xs i
-  ;;
-
-  let read state file =
-    match Scanf.sscanf_opt file "<repl-%d>" (fun i -> nth_back_opt i state.history) with
-    | Some contents -> contents
-    | None -> Diagnostic.read file
+    { typecheck = OneMl.Typecheck.Session.empty; eval = OneMl.Eval.Session.empty }
   ;;
 
   let next xs state =
     let typecheck, es, ts = OneMl.Typecheck.Session.next state.typecheck xs in
     let eval = OneMl.Eval.Session.next state.eval es in
-    { state with typecheck; eval }, ts
+    { typecheck; eval }, ts
   ;;
 
   let base state = OneMl.Typecheck.Env.base state.typecheck.env
+end
+
+module Sources = struct
+  let sources : (string, string) Hashtbl.t = Hashtbl.create 16
+  let filename () = Printf.sprintf "<repl-%d>" (Hashtbl.length sources + 1)
+  let register filename source = Hashtbl.replace sources filename source
+
+  let read path =
+    match Hashtbl.find_opt sources path with
+    | Some source -> Some source
+    | None -> Diagnostic.read path
+  ;;
 end
 
 let expr_as_file expr =
@@ -83,13 +77,14 @@ let error_at_eof source diag =
   | Some (p, _) -> p.Lexing.pos_cnum >= Buffer.length source
 ;;
 
-let read_code ?filename state line =
+let read_code ?filename line =
+  let filename = Option.value ~default:(Sources.filename ()) filename in
   let rec loop buf =
-    let filename = Option.value ~default:(State.filename state) filename
-    and source = Buffer.contents buf in
+    let source = Buffer.contents buf in
+    Sources.register filename source;
     match OneMl.Syntax.parse_repl ~filename source with
-    | Left expr -> State.append source state, CExpr expr
-    | Right file -> State.append source state, CEval file
+    | Left expr -> CExpr expr
+    | Right file -> CEval file
     | exception Diagnostic.Error.Error diag when error_at_eof buf diag ->
       (match prompt " ..> " with
        | line ->
@@ -98,9 +93,7 @@ let read_code ?filename state line =
          loop buf
        | exception End_of_file ->
          print_newline ();
-         let state = State.append source state in
-         Diagnostic.print ~read:(State.read state) diag;
-         state, CNone)
+         raise (Diagnostic.Error.Error diag))
   in
   let buf = Buffer.create 64 in
   Buffer.add_string buf line;
@@ -108,16 +101,16 @@ let read_code ?filename state line =
   loop buf
 ;;
 
-let read state =
+let read () =
   match prompt "1ml> " with
   | line ->
     (match String.trim line with
-     | trimmed when String.starts_with ~prefix:"#" trimmed -> state, read_command line
-     | "" -> state, CNone
-     | _ -> read_code state line)
+     | trimmed when String.starts_with ~prefix:"#" trimmed -> read_command line
+     | "" -> CNone
+     | _ -> read_code line)
   | exception End_of_file ->
     print_newline ();
-    state, CExit
+    CExit
 ;;
 
 let print_result env t v =
@@ -141,4 +134,11 @@ let eval state cmd =
     let v = Eval.Env.find x state.eval in
     print_result (State.base state) t v;
     state
+;;
+
+let rec loop state =
+  let step () = eval state (read ()) in
+  match OneMl.Diagnostic.protect ~read:Sources.read step with
+  | None -> loop state
+  | Some state -> loop state
 ;;

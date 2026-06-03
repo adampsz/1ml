@@ -24,41 +24,28 @@ let run_fomega expr =
 let run expr = Eval.Eval.eval (Eval.Env.init Eval.Extern.rossberg) expr
 
 let file inputs =
-  try
+  let run () =
     let expr = read_files ?prelude:Args.prelude inputs in
     let expr = Typecheck.Check.file Typecheck.Env.empty expr in
     if Args.fomega then ignore (run_fomega expr) else ignore (run expr)
-  with
-  | OneMl.Diagnostic.Error.Error diag ->
-    OneMl.Diagnostic.print ~read:OneMl.Diagnostic.read diag
+  in
+  OneMl.Diagnostic.protect run
 ;;
 
-let rec repl state =
-  let state =
-    try
-      let state, cmd = Repl.read state in
-      let state = Repl.eval state cmd in
-      state
-    with
-    | OneMl.Diagnostic.Error.Error diag ->
-      OneMl.Diagnostic.print ~read:(Repl.State.read state) diag;
+let repl () =
+  let init () =
+    match Args.prelude with
+    | None -> Repl.State.empty
+    | Some path ->
+      let file = Syntax.parse_file path in
+      let state, _ = Repl.State.next file Repl.State.empty in
       state
   in
-  repl state
-;;
-
-let init_repl () =
-  match Args.prelude with
-  | None -> Repl.State.empty
-  | Some path ->
-    (try
-       let file = Syntax.parse_file path in
-       let state, _ = Repl.State.next file Repl.State.empty in
-       state
-     with
-     | Diagnostic.Error.Error diag ->
-       Diagnostic.print ~read:Diagnostic.read diag;
-       exit 1)
+  match OneMl.Diagnostic.protect init with
+  | Some state ->
+    Printf.printf "%s\n%!" Repl.intro;
+    Repl.loop state
+  | None -> exit 1
 ;;
 
 let _ =
@@ -72,10 +59,25 @@ let _ =
       Trace.reporter (fun name -> Format.formatter_of_out_channel (file name)) reporter
     | None -> reporter
   in
-  Logs.set_reporter reporter;
+  Logs.set_reporter reporter
+;;
+
+let _ =
+  let f = function
+    | Exit -> Some "Exit"
+    | Invalid_argument _ -> Some "Invalid argument"
+    | Failure cause -> Some (Printf.sprintf "Failure: %s" cause)
+    | Not_found -> Some "Not found"
+    | Sys_error cause -> Some (Printf.sprintf "Sys error: %s" cause)
+    | End_of_file -> Some "End of file"
+    | Division_by_zero -> Some "Division by zero"
+    | _ -> None
+  in
+  Printexc.register_printer f
+;;
+
+let _ =
   match Args.mode with
-  | Repl ->
-    Printf.printf "%s\n%!" Repl.intro;
-    repl (init_repl ())
+  | Repl -> repl ()
   | Run inputs -> file inputs
 ;;

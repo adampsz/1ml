@@ -146,6 +146,7 @@ let pp ?(read = Fun.const None) ppf diag =
     | Some (Error.Error cause) ->
       fprintf ppf "  %s\n" cause.message;
       walk cause.cause
+    | Some exn -> fprintf ppf "  %s\n" (Printexc.to_string exn)
     | _ -> ()
   in
   walk diag.cause;
@@ -163,10 +164,18 @@ let read path =
   | exception Sys_error _ -> None
 ;;
 
-let protect ?read f x =
-  try Some (f x) with
+let protect ?(read = read) f =
+  try Some (f ()) with
   | Error.Error diag ->
-    print ?read diag;
+    print ~read diag;
     Printexc.print_backtrace stderr;
     None
+;;
+
+let _ =
+  let f = function
+    | Error.Error err -> Some (Format.asprintf "%a" (pp ?read:None) err)
+    | _ -> None
+  in
+  Printexc.register_printer f
 ;;
