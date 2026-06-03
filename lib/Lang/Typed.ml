@@ -847,9 +847,9 @@ module Invariant = struct
     | ESeal (e, tc, s) ->
       let a, t = Type.as_module (expr env e) in
       cons (Env.add_tvar a env) tc;
-      let a = Path.var env.path in
+      let a, s = Type.as_module s in
       invariant (Equal.typ (Subst.typ (Subst.one a tc) s) t);
-      s
+      Type.as_type a s
     | EMod (a, e) ->
       invariant (not (TVar.is_empty a));
       let t = expr (Env.enter_mod a env) e in

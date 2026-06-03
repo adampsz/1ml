@@ -343,18 +343,22 @@ module Elab = struct
     | S.Expr.EExtern (s, t) -> [], T.Expr.EExtern (s, Type.typ env t)
     | S.Expr.EWrap (x, _) -> [], Sugar.Expr.wrap (expr env x |> snd)
     | S.Expr.EUnwrap e -> [], Sugar.Expr.unwrap (snd (expr env e))
-    | S.Expr.ESeal (e, tc, t) ->
-      let a, e = S.Expr.as_module e in
+    | S.Expr.ESeal (e, tc, s) ->
       let x = T.Var.fresh () in
-      let env', aks' = Env.add_tvar a env in
-      let env' = Env.enter_mod a env' in
-      let _, e1 = expr env' e in
-      let e2 =
-        let e = T.Expr.EVar x in
-        let a = Env.module_tvars env in
-        Sugar.Expr.pack a (Type.cons env' tc) (Type.typ env t) e
+      let env', aks', e1 =
+        let a', e = S.Expr.as_module e in
+        let env', aks' = Env.add_tvar a' env in
+        let env' = Env.enter_mod a' env' in
+        let _, e1 = expr env' e in
+        env', aks', e1
       in
-      Env.module_tvars env, Sugar.Expr.unpack aks' x e1 e2
+      let e2 =
+        let a, s = S.Type.as_module s in
+        let env, aks = Env.add_tvar a env in
+        let env = Env.enter_mod a env in
+        Sugar.Expr.pack aks (Type.cons env' tc) (Type.typ env s) (EVar x)
+      in
+      [], Sugar.Expr.unpack aks' x e1 e2
     | S.Expr.EMod (a, e) ->
       let env, aks = Env.add_tvar a env in
       let env = Env.enter_mod a env in

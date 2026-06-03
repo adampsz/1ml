@@ -264,20 +264,15 @@ module Subtype = struct
       let inst, t' = Implicit.instantiate (Env.domain env) t' in
       let acc, f = typ (env, acc) t' t in
       acc, fun e -> f (inst e)
-    (* Modules*)
-    (* TODO: simplify *)
-    | TMod (a', t'), TMod (a, t) ->
-      let f =
-        let c, f = typ (Env.enter_mod a (Env.add_tvar a' env)) t' t in
-        let c = Option.value c ~default:(T.Type.CRecord []) in
-        fun e -> T.Expr.EMod (a, ESeal (EMod (a', f (EUse e)), c, t))
-      in
-      acc, f
+    (* Modules *)
     | _, TMod (a, t) ->
-      let f =
-        let c, f = typ (Env.enter_mod a env) t' t in
-        let c = Option.value c ~default:(T.Type.CRecord []) in
-        fun e -> T.Expr.EMod (a, ESeal (f e, c, t))
+      let a', t' = T.Type.as_module t' in
+      let env = if T.TVar.is_empty a' then env else Env.add_tvar a' env in
+      let tc, f = typ (Env.enter_mod a env) t' t in
+      let tc = Option.value tc ~default:(T.Type.CRecord []) in
+      let f e =
+        let e = if T.TVar.is_empty a' then f e else T.Expr.EMod (a', f (EUse e)) in
+        T.Expr.ESeal (e, tc, TMod (a, t) |> wrap)
       in
       acc, f
     | TMod (a', t'), _ ->
@@ -634,12 +629,11 @@ module Check = struct
       let t = modu_typ env t in
       None, T.Effect.Pure, TSingleton t |> wrap ?span, T.Expr.EType t
     | S.ESeal (x, t) ->
-      let xv, t' = Env.find ?span:(S.Node.span x) (S.Node.data x) env
-      and k, t = typ env t in
-      let c, f = Subtype.typ (Subtype.Env.of_env env) t' t in
-      let c = Option.value c ~default:(T.Type.CRecord []) in
-      let e = T.Expr.ESeal (f (EVar xv), c, t) in
-      k, Env.eff t env, t, e
+      let xv, t' = Env.find ?span:(S.Node.span x) (S.Node.data x) env in
+      let t = modu_typ env t in
+      let _, f = Subtype.typ (Subtype.Env.of_env env) t' t in
+      let k, t, e = path_prepend env t in
+      k, Env.eff t env, t, e (f (EVar xv))
     | S.EWrap (x, t) ->
       let t = modu_typ env t in
       let t =
