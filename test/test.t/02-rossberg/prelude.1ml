@@ -91,7 +91,7 @@ Text =
   (>) = extern "Text.>" : text -> text -> bool;
   (<=) = extern "Text.<=" : text -> text -> bool;
   (>=) = extern "Text.>=" : text -> text -> bool;
-  lenght = extern "Text.length" : text -> int;
+  length = extern "Text.length" : text -> int;
   sub = extern "Text.sub" : int -> int -> text -> text;
   fromChar = extern "Text.fromChar" : char -> text;
   print = extern "Text.print" : text -> ();
