@@ -34,18 +34,28 @@ let file inputs =
 ;;
 
 let rec repl state =
-  let state, cmd = Repl.read state in
-  let state = Repl.eval state cmd in
+  let state =
+    try
+      let state, cmd = Repl.read state in
+      let state = Repl.eval state cmd in
+      state
+    with
+    | OneMl.Diagnostic.Error.Error diag ->
+      OneMl.Diagnostic.print ~read:(Repl.State.read state) diag;
+      state
+  in
   repl state
 ;;
-
-let load_prelude path state = fst (Repl.State.next (Syntax.parse_file path) state)
 
 let init_repl () =
   match Args.prelude with
   | None -> Repl.State.empty
   | Some path ->
-    (try load_prelude path Repl.State.empty with
+    (try
+       let file = Syntax.parse_file path in
+       let state, _ = Repl.State.next file Repl.State.empty in
+       state
+     with
      | Diagnostic.Error.Error diag ->
        Diagnostic.print ~read:Diagnostic.read diag;
        exit 1)
@@ -64,6 +74,8 @@ let _ =
   in
   Logs.set_reporter reporter;
   match Args.mode with
-  | Repl -> repl (init_repl ())
+  | Repl ->
+    Printf.printf "%s\n%!" Repl.intro;
+    repl (init_repl ())
   | Run inputs -> file inputs
 ;;

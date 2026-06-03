@@ -3,8 +3,9 @@ module S = Lang.Surface
 module T = Lang.Typed
 
 type cmd =
-  | CEval of string * S.file
-  | CExpr of string * S.expr
+  | CEval of S.file
+  | CExpr of S.expr
+  | CNone
   | CHelp
   | CExit
 
@@ -51,8 +52,13 @@ let expr_as_file expr =
   [ S.Node.make ?span (S.BVal (Public, it, expr)) ]
 ;;
 
+let intro = "Type #help for available commands."
+
 let help =
-  "Available commands:\n  #help - Display this help\n  #exit - Exit interactive session\n"
+  "Available commands:\n\
+  \  #help              Display this help\n\
+  \  #load <path>       Load source file\n\
+  \  #exit              Exit interactive session"
 ;;
 
 let prompt p =
@@ -67,6 +73,7 @@ let read_command line =
   match String.split_on_char ' ' body |> List.filter (fun s -> s <> "") with
   | [] | [ "help" ] -> CHelp
   | [ "exit" ] -> CExit
+  | [ "load"; path ] -> CEval (OneMl.Syntax.parse_file path)
   | _ -> Diagnostic.Error.error "unknown REPL command: %s" body
 ;;
 
@@ -76,18 +83,13 @@ let error_at_eof source diag =
   | Some (p, _) -> p.Lexing.pos_cnum >= Buffer.length source
 ;;
 
-let try_parse f source ~filename =
-  try Ok (f ~filename source) with
-  | Diagnostic.Error.Error diag -> Error diag
-;;
-
 let read_code ?filename state line =
   let rec loop buf =
     let filename = Option.value ~default:(State.filename state) filename
     and source = Buffer.contents buf in
     match OneMl.Syntax.parse_repl ~filename source with
-    | Left expr -> State.append source state, CExpr (source, expr)
-    | Right file -> State.append source state, CEval (source, file)
+    | Left expr -> State.append source state, CExpr expr
+    | Right file -> State.append source state, CEval file
     | exception Diagnostic.Error.Error diag when error_at_eof buf diag ->
       (match prompt " ..> " with
        | line ->
@@ -98,11 +100,7 @@ let read_code ?filename state line =
          print_newline ();
          let state = State.append source state in
          Diagnostic.print ~read:(State.read state) diag;
-         state, CEval (source, []))
-    | exception Diagnostic.Error.Error diag ->
-      let state = State.append source state in
-      Diagnostic.print ~read:(State.read state) diag;
-      state, CEval (source, [])
+         state, CNone)
   in
   let buf = Buffer.create 64 in
   Buffer.add_string buf line;
@@ -113,10 +111,10 @@ let read_code ?filename state line =
 let read state =
   match prompt "1ml> " with
   | line ->
-    let trimmed = String.trim line in
-    if String.starts_with ~prefix:"#" trimmed
-    then state, read_command line
-    else read_code state line
+    (match String.trim line with
+     | trimmed when String.starts_with ~prefix:"#" trimmed -> state, read_command line
+     | "" -> state, CNone
+     | _ -> read_code state line)
   | exception End_of_file ->
     print_newline ();
     state, CExit
@@ -128,24 +126,19 @@ let print_result env t v =
 ;;
 
 let eval state cmd =
-  try
-    match cmd with
-    | CExit -> exit 0
-    | CHelp ->
-      print_string help;
-      flush stdout;
-      state
-    | CEval (_, xs) ->
-      let state, _ = State.next xs state in
-      state
-    | CExpr (_, expr) ->
-      let state, ts = State.next (expr_as_file expr) state in
-      let x, t = Lang.Typed.Var.assoc "#res" ts in
-      let v = Eval.Env.find x state.eval in
-      print_result (State.base state) t v;
-      state
-  with
-  | Diagnostic.Error.Error diag ->
-    Diagnostic.print ~read:(State.read state) diag;
+  match cmd with
+  | CExit -> exit 0
+  | CNone -> state
+  | CHelp ->
+    Printf.printf "%s\n%!" help;
+    state
+  | CEval xs ->
+    let state, _ = State.next xs state in
+    state
+  | CExpr expr ->
+    let state, ts = State.next (expr_as_file expr) state in
+    let x, t = Lang.Typed.Var.assoc "#res" ts in
+    let v = Eval.Env.find x state.eval in
+    print_result (State.base state) t v;
     state
 ;;
