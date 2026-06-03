@@ -279,21 +279,21 @@ module Subtype = struct
       let acc, f = typ (Env.add_tvar a' env, acc) t' t in
       acc, fun e -> T.Expr.ESeal (EMod (a', f (EUse e)), T.Type.CRecord [], t)
     (* Unification *)
-    | TInfer z', TRecord xs ->
+    | TInfer z', TRecord xs when not (T.Type.occurs z' t) ->
       let t' = wrap (TRecord (List.map (fun (x, _) -> x, Env.uvar env) xs)) in
       assert (T.Type.resolve z' t');
       typ (env, acc) t' t
-    | TRecord xs', TInfer z ->
+    | TRecord xs', TInfer z when not (T.Type.occurs z t') ->
       let t = wrap (TRecord (List.map (fun (x', _) -> x', Env.uvar env) xs')) in
       assert (T.Type.resolve z t);
       typ (env, acc) t' t
     | TInfer z', TArrow (x, t1, Explicit Impure, t2)
-      when T.Type.is_small t1 && T.Type.is_small t2 ->
+      when T.Type.is_small t1 && T.Type.is_small t2 && not (T.Type.occurs z' t) ->
       let t' = TArrow (x, Env.uvar env, Explicit Impure, Env.uvar env) |> wrap in
       assert (T.Type.resolve z' t');
       typ (env, acc) t' t
     | TArrow (x, t1', Explicit _, t2'), TInfer z
-      when T.Type.is_small t1' && T.Type.is_small t2' ->
+      when T.Type.is_small t1' && T.Type.is_small t2' && not (T.Type.occurs z t') ->
       let t = TArrow (x, Env.uvar env, Explicit Impure, Env.uvar env) |> wrap in
       assert (T.Type.resolve z t);
       typ (env, acc) t' t

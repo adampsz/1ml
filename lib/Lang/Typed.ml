@@ -564,12 +564,35 @@ module Type = struct
     typ (UVar.scope z) t
   ;;
 
+  let occurs z t =
+    let rec typ t =
+      match view t with
+      | TInfer z' -> UVar.equal z z'
+      | TAbstr p -> path p
+      | TPrim _ -> false
+      | TArrow (_, t1, _, t2) -> typ t1 || typ t2
+      | TRecord ts -> List.exists (fun (_, t) -> typ t) ts
+      | TSingleton t -> typ t
+      | TWrapped t -> typ t
+      | TMod (_, t) -> typ t
+    and path = function
+      | Path.PVar _ -> false
+      | Path.PApp (p, c) -> path p || cons c
+      | Path.PProj (p, _) -> path p
+    and cons = function
+      | CType t -> typ t
+      | CLam (_, c) -> cons c
+      | CRecord ts -> List.exists (fun (_, c) -> cons c) ts
+    in
+    typ t
+  ;;
+
   let resolve z' t =
     match view t with
     | TInfer z ->
       UVar.resolve (fun z -> TInfer z) z' z;
       true
-    | _ when is_small t && extrude z' t ->
+    | _ when (not (occurs z' t)) && is_small t && extrude z' t ->
       UVar.set z' (view t);
       true
     | _ -> false
