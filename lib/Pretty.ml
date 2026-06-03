@@ -103,7 +103,12 @@ module Prec = struct
 end
 
 module Print = struct
-  let var ppf x = Format.pp_print_string ppf (T.Var.name x)
+  let var ppf x =
+    let x = T.Var.name x in
+    if String.length x > 0 && String.contains "$&*+-/=>@^|%<~!?:." x.[0]
+    then Format.fprintf ppf "(%s)" x
+    else Format.pp_print_string ppf x
+  ;;
 
   let record fmt ppf = function
     | [] -> Format.pp_print_string ppf "{ }"
