@@ -1,18 +1,3 @@
-  $ cat > prelude.1ml <<'EOF'
-  > type unit = extern "unit";
-  > type bool = extern "bool";
-  > type int = extern "int";
-  > type string = extern "string";
-  > 
-  > true = extern "Bool.true" : bool;
-  > false = extern "Bool.false" : bool;
-  > 
-  > Assert = {
-  >   ok = extern "Assert.ok" : bool -> unit;
-  >   eq 'a (x : a) (y : a) = (extern "Assert.eq" : a -> a -> unit) x y;
-  > }
-  > EOF
-
   $ 1ml nonexistent.1ml
   Error: Could not open file `nonexistent.1ml'
     Sys error: nonexistent.1ml: No such file or directory
@@ -63,8 +48,7 @@
   [1]
 
   $ echo 'x = extern "unknown": unit' | 1ml -
-  File "<stdin>", line 1, characters 23-26:
-  Error: unbound variable `unit'
+  Error: undefined external symbol `unknown'
   [1]
 
   $ echo 'x = foo' | 1ml -
@@ -102,7 +86,7 @@
   Error: expected a singleton type, but got `unit'
   [1]
 
-  $ echo 'x: (Assert.ok true) = ()' | 1ml --prelude prelude.1ml -
+  $ echo 'x: (Assert.ok true) = ()' | 1ml -
   Error: expected a pure expression
   [1]
 
@@ -111,7 +95,7 @@
   Error: expected a boolean, but got `unit'
   [1]
 
-  $ echo 'x: int = ()' | 1ml --prelude prelude.1ml -
+  $ echo 'x: int = ()' | 1ml -
   File "<stdin>", line 1, characters 10-11:
   Error: type `unit' is not assignable to `int'
   [1]
@@ -122,35 +106,35 @@
     record is missing field `a'
   [1]
 
-  $ echo 'f (x: { a: unit }): { a: int } = x' | 1ml --prelude prelude.1ml -
+  $ echo 'f (x: { a: unit }): { a: int } = x' | 1ml -
   File "<stdin>", line 1, characters 7-17:
   Error: type `{ a: unit }' is not assignable to `{ a: int }'
     in record field `a':
     type `unit' is not assignable to `int'
   [1]
 
-  $ echo 'f (x: unit -> unit): int -> unit = x' | 1ml --prelude prelude.1ml -
+  $ echo 'f (x: unit -> unit): int -> unit = x' | 1ml -
   File "<stdin>", line 1, characters 7-18:
   Error: type `unit -> unit' is not assignable to `int -> unit'
     in function argument:
     type `int' is not assignable to `unit'
   [1]
 
-  $ echo 'f (x: unit -> unit): unit -> int = x' | 1ml --prelude prelude.1ml -
+  $ echo 'f (x: unit -> unit): unit -> int = x' | 1ml -
   File "<stdin>", line 1, characters 7-18:
   Error: type `unit -> unit' is not assignable to `unit -> int'
     in function return:
     type `unit' is not assignable to `int'
   [1]
 
-  $ echo 'f (x: (= type unit)): (= type int) = x' | 1ml --prelude prelude.1ml -
+  $ echo 'f (x: (= type unit)): (= type int) = x' | 1ml -
   File "<stdin>", line 1, characters 7-19:
   Error: type `(= type unit)' is not assignable to `(= type int)'
     in singleton type:
     type `unit' is not assignable to `int'
   [1]
 
-  $ echo 'f (x: wrap unit): wrap int = x' | 1ml --prelude prelude.1ml -
+  $ echo 'f (x: wrap unit): wrap int = x' | 1ml -
   File "<stdin>", line 1, characters 7-15:
   Error: type `wrap unit' is not assignable to `wrap int'
     in wrapped type:
@@ -184,7 +168,7 @@
     type `(= type <abstr>)' is not assignable to `<abstr>'
   [1]
 
-  $ echo 'type Ti = type; C = if true then Ti else int: type;' | 1ml --prelude prelude.1ml -
+  $ echo 'type Ti = type; C = if true then Ti else int: type;' | 1ml -
   File "<stdin>", line 1, characters 11-14:
   Error: type `(= type type)' is not assignable to `type'
     in singleton type:
@@ -196,6 +180,6 @@
   Error: type `type -> type' is not assignable to `type => type'
   [1]
 
-  $ echo 'do Assert.eq 1 2;' | 1ml --prelude prelude.1ml -
+  $ echo 'do Assert.eq 1 2;' | 1ml -
   Error: expected 1, but got 2
   [1]

@@ -256,8 +256,8 @@ pat_atom:
   | "(" ps=punctuated_nonempty_list(",", pat) ")" { Sugar.pat_tuple ~span:$loc ps }
 
 pat_bind:
-  | x=var "=" p=pat { x, p }
-  | x=var           { x, Sugar.PId x @@ $loc }
+  | x=proj "=" p=pat { x, p }
+  | x=proj           { x, Sugar.PId x @@ $loc }
 ;
 
 (* Atoms *)
@@ -268,8 +268,7 @@ var:
 ;
 
 proj:
-  | id=ID  { id @@ $loc }
-  | id=op  { id @@ $loc }
+  | id=var { id }
   | id=INT { Int.to_string id @@ $loc }
 ;
 

@@ -1,5 +1,5 @@
 type meta =
-  { prelude : string
+  { prelude : string list
   ; skip : bool
   }
 
@@ -27,13 +27,14 @@ let words s =
 let parse file =
   let aux acc line =
     match words line with
-    | [ "(*"; "@prelude"; "*)" ] -> { acc with prelude = Filename.null }
-    | [ "(*"; "@prelude"; prelude; "*)" ] -> { acc with prelude }
+    | [ "(*"; "@prelude"; "*)" ] -> { acc with prelude = [ "--no-prelude" ] }
+    | [ "(*"; "@prelude"; prelude; "*)" ] ->
+      let prelude = filename_join (Filename.dirname file) prelude in
+      { acc with prelude = [ "--prelude"; prelude ] }
     | [ "(*"; "@skip"; "*)" ] -> { acc with skip = true }
     | _ -> acc
   in
-  let prelude = filename_join (Sys.getcwd ()) "prelude.1ml" in
-  let meta = { prelude; skip = false } in
+  let meta = { prelude = []; skip = false } in
   In_channel.fold_lines aux meta (In_channel.open_text file)
 ;;
 
@@ -41,8 +42,7 @@ let run cmd extra file =
   match parse file with
   | { skip = true; _ } -> 0
   | { prelude; _ } ->
-    let prelude = filename_join (Filename.dirname file) prelude in
-    let args = extra @ [ "--prelude"; prelude; file ] in
+    let args = extra @ prelude @ [ file ] in
     Sys.command (Filename.quote_command cmd args)
 ;;
 

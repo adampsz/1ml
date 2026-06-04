@@ -51,10 +51,12 @@ module Value = struct
     let of_unit x = VConst (CUnit x)
     let of_bool x = VConst (CBool x)
     let of_int x = VConst (CInt x)
+    let of_float x = VConst (CFloat x)
     let of_char x = VConst (CChar x)
     let of_string x = VConst (CString x)
     let[@ocaml.warning "-8"] to_bool (VConst (CBool x)) = x
     let[@ocaml.warning "-8"] to_int (VConst (CInt x)) = x
+    let[@ocaml.warning "-8"] to_float (VConst (CFloat x)) = x
     let[@ocaml.warning "-8"] to_char (VConst (CChar x)) = x
     let[@ocaml.warning "-8"] to_string (VConst (CString x)) = x
   end
@@ -115,19 +117,31 @@ module Extern = struct
     | "Int.<=" -> binary (fun x1 x2 -> of_bool (to_int x1 <= to_int x2))
     | "Int.>=" -> binary (fun x1 x2 -> of_bool (to_int x1 >= to_int x2))
     | "Int.print" -> unary (fun x -> of_unit (Format.printf "%d%!" (to_int x)))
+    | "Float.+." -> binary (fun x1 x2 -> of_float (to_float x1 +. to_float x2))
+    | "Float.-." -> binary (fun x1 x2 -> of_float (to_float x1 -. to_float x2))
+    | "Float.*." -> binary (fun x1 x2 -> of_float (to_float x1 *. to_float x2))
+    | "Float./." -> binary (fun x1 x2 -> of_float (to_float x1 /. to_float x2))
+    | "Float.%." -> binary (fun x1 x2 -> of_float (Float.rem (to_float x1) (to_float x2)))
+    | "Float.**." ->
+      binary (fun x1 x2 -> of_float (Float.pow (to_float x1) (to_float x2)))
+    | "Float.<." -> binary (fun x1 x2 -> of_bool (to_float x1 < to_float x2))
+    | "Float.>." -> binary (fun x1 x2 -> of_bool (to_float x1 > to_float x2))
+    | "Float.<=." -> binary (fun x1 x2 -> of_bool (to_float x1 <= to_float x2))
+    | "Float.>=." -> binary (fun x1 x2 -> of_bool (to_float x1 >= to_float x2))
+    | "Float.print" -> unary (fun x -> of_unit (Format.printf "%d%!" (to_int x)))
     | "Char.toInt" -> unary (fun x -> of_int (Char.code (to_char x)))
     | "Char.fromInt" -> unary (fun x -> of_char (Char.chr (to_int x)))
     | "Char.print" -> unary (fun x -> of_unit (Format.printf "%c%!" (to_char x)))
-    | "Text.++" -> binary (fun x1 x2 -> of_string (to_string x1 ^ to_string x2))
-    | "Text.<" -> binary (fun x1 x2 -> of_bool (to_string x1 < to_string x2))
-    | "Text.>" -> binary (fun x1 x2 -> of_bool (to_string x1 > to_string x2))
-    | "Text.<=" -> binary (fun x1 x2 -> of_bool (to_string x1 <= to_string x2))
-    | "Text.>=" -> binary (fun x1 x2 -> of_bool (to_string x1 >= to_string x2))
-    | "Text.length" -> unary (fun x -> of_int (String.length (to_string x)))
-    | "Text.sub" ->
+    | "String.++" -> binary (fun x1 x2 -> of_string (to_string x1 ^ to_string x2))
+    | "String.<" -> binary (fun x1 x2 -> of_bool (to_string x1 < to_string x2))
+    | "String.>" -> binary (fun x1 x2 -> of_bool (to_string x1 > to_string x2))
+    | "String.<=" -> binary (fun x1 x2 -> of_bool (to_string x1 <= to_string x2))
+    | "String.>=" -> binary (fun x1 x2 -> of_bool (to_string x1 >= to_string x2))
+    | "String.length" -> unary (fun x -> of_int (String.length (to_string x)))
+    | "String.sub" ->
       ternary (fun i j x -> of_string (String.sub (to_string x) (to_int i) (to_int j)))
-    | "Text.fromChar" -> unary (fun x -> of_string (String.make 1 (to_char x)))
-    | "Text.print" -> unary (fun x -> of_unit (Format.printf "%s%!" (to_string x)))
+    | "String.fromChar" -> unary (fun x -> of_string (String.make 1 (to_char x)))
+    | "String.print" -> unary (fun x -> of_unit (Format.printf "%s%!" (to_string x)))
     | "Assert.ok" -> unary (fun x -> of_unit (assert (to_bool x)))
     | "Assert.eq" -> binary (fun x1 x2 -> of_unit (assert_eq x1 x2))
     | _ -> None

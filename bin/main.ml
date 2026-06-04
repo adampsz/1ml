@@ -5,13 +5,18 @@ let read = function
   | path -> Syntax.parse_file path
 ;;
 
-let read_files ?prelude inputs : Lang.Surface.file =
+let read_prelude = function
+  | Args.NoPrelude -> []
+  | Args.CustomPrelude path -> read path
+  | Args.DefaultPrelude -> Syntax.parse_string ~filename:"<prelude>" OneMl.prelude
+;;
+
+let read_files prelude inputs : Lang.Surface.file =
   let open Lang.Surface in
-  let prelude = Option.fold ~none:[] ~some:read prelude in
   let file path =
     Node.make (BVal (Public, Node.make path, Node.make (EStruct (read path))))
   in
-  prelude @ List.map file inputs
+  read_prelude prelude @ List.map file inputs
 ;;
 
 let run_fomega expr =
@@ -25,7 +30,7 @@ let run expr = Eval.Eval.eval (Eval.Env.init Eval.Extern.rossberg) expr
 
 let file inputs =
   let run () =
-    let expr = read_files ?prelude:Args.prelude inputs in
+    let expr = read_files Args.prelude inputs in
     let expr = Typecheck.Check.file Typecheck.Env.empty expr in
     if Args.fomega then ignore (run_fomega expr) else ignore (run expr)
   in
@@ -36,12 +41,9 @@ let file inputs =
 
 let repl () =
   let init () =
-    match Args.prelude with
-    | None -> Repl.State.empty
-    | Some path ->
-      let file = Syntax.parse_file path in
-      let state, _ = Repl.State.next file Repl.State.empty in
-      state
+    let prelude = read_prelude Args.prelude in
+    let state, _ = Repl.State.next prelude Repl.State.empty in
+    state
   in
   match OneMl.Diagnostic.protect init with
   | Some state ->

@@ -2,10 +2,15 @@ type mode =
   | Run of string list
   | Repl
 
+type prelude =
+  | DefaultPrelude
+  | CustomPrelude of string
+  | NoPrelude
+
 let inputs = ref []
 and repl = ref false
 and fomega = ref false
-and prelude = ref None
+and prelude = ref DefaultPrelude
 and trace = ref None
 and color = ref None
 
@@ -22,8 +27,6 @@ let get_help msg =
   in
   String.split_on_char '\n' msg |> List.filter_map f |> String.concat "\n"
 ;;
-
-let set_string_opt ref = Arg.String (fun s -> ref := Some s)
 
 let set_color ref =
   let f = function
@@ -42,8 +45,15 @@ let show_version () =
 
 let spec =
   [ "--repl", Arg.Set repl, "\tStart interactive repl"
-  ; "--prelude", set_string_opt prelude, "\tConfigure prelude file"
-  ; "--trace", set_string_opt trace, "\tGenerate tracing artifacts in given directory"
+  ; ( "--prelude"
+    , Arg.String (fun p -> prelude := CustomPrelude p)
+    , "\tConfigure prelude file" )
+  ; ( "--no-prelude"
+    , Arg.Unit (fun () -> prelude := NoPrelude)
+    , "\tDisable built-in default prelude" )
+  ; ( "--trace"
+    , Arg.String (fun p -> trace := Some p)
+    , "\tGenerate tracing artifacts in given directory" )
   ; "--f-omega", Arg.Set fomega, "\tElaborate to F-omega and then evaluate"
   ; "--color", set_color color, "\tColorize output (always, never, auto)"
   ; "--version", Arg.Unit show_version, "\tDisplay version information"

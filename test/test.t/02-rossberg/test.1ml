@@ -2,8 +2,8 @@
 
 log = {
     type text = extern "string";
-    print = extern "Text.print": text -> ();
-    (++) = extern "Text.++": text -> text -> text;
+    print = extern "String.print": text -> ();
+    (++) = extern "String.++": text -> text -> text;
     log s = print (s ++ "\n");
 }.log;
 
@@ -44,13 +44,13 @@ Int =
   print = extern "Int.print": int -> ();
 };
 type int = Int.t;
-(+) = Int.+;
-(-) = Int.-;
-(*) = Int.*;
-(<) = Int.<;
-(>) = Int.>;
-(<=) = Int.<=;
-(>=) = Int.>=;
+(+) = Int.(+);
+(-) = Int.(-);
+(*) = Int.(*);
+(<) = Int.(<);
+(>) = Int.(>);
+(<=) = Int.(<=);
+(>=) = Int.(>=);
 
 do log "Char";
 
@@ -70,18 +70,18 @@ Text =
 {
   type text = extern "string";
   type t = text;
-  (++) = extern "Text.++": text -> text -> text;
-  (<) = extern "Text.<": text -> text -> bool;
-  (>) = extern "Text.>": text -> text -> bool;
-  (<=) = extern "Text.<=": text -> text -> bool;
-  (>=) = extern "Text.>=": text -> text -> bool;
-  length t = extern "Text.length": text -> int;
-  sub = extern "Text.sub": text -> int -> int -> text;
-  fromChar = extern "Text.fromChar": char -> text;
-  print = extern "Text.print": text -> ();
+  (++) = extern "String.++": text -> text -> text;
+  (<) = extern "String.<": text -> text -> bool;
+  (>) = extern "String.>": text -> text -> bool;
+  (<=) = extern "String.<=": text -> text -> bool;
+  (>=) = extern "String.>=": text -> text -> bool;
+  length t = extern "String.length": text -> int;
+  sub = extern "String.sub": text -> int -> int -> text;
+  fromChar = extern "String.fromChar": char -> text;
+  print = extern "String.print": text -> ();
 };
 type text = Text.t;
-(++) = Text.++;
+(++) = Text.(++);
 print = Text.print;
 
 do log "Opt";

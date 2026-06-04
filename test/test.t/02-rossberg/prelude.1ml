@@ -56,15 +56,15 @@ Int =
   print = extern "Int.print" : int -> ();
 };
 type int = Int.t;
-(+) = Int.+;
-(-) = Int.-;
-(*) = Int.*;
-(/) = Int./;
-(%) = Int.%;
-(<) = Int.<;
-(>) = Int.>;
-(<=) = Int.<=;
-(>=) = Int.>=;
+(+) = Int.(+);
+(-) = Int.(-);
+(*) = Int.(*);
+(/) = Int.(/);
+(%) = Int.(%);
+(<) = Int.(<);
+(>) = Int.(>);
+(<=) = Int.(<=);
+(>=) = Int.(>=);
 
 
 (* Char *)
@@ -86,18 +86,18 @@ Text =
 {
   type text = extern "string";
   type t = text;
-  (++) = extern "Text.++" : text -> text -> text;
-  (<) = extern "Text.<" : text -> text -> bool;
-  (>) = extern "Text.>" : text -> text -> bool;
-  (<=) = extern "Text.<=" : text -> text -> bool;
-  (>=) = extern "Text.>=" : text -> text -> bool;
-  length = extern "Text.length" : text -> int;
-  sub = extern "Text.sub" : int -> int -> text -> text;
-  fromChar = extern "Text.fromChar" : char -> text;
-  print = extern "Text.print" : text -> ();
+  (++) = extern "String.++" : text -> text -> text;
+  (<) = extern "String.<" : text -> text -> bool;
+  (>) = extern "String.>" : text -> text -> bool;
+  (<=) = extern "String.<=" : text -> text -> bool;
+  (>=) = extern "String.>=" : text -> text -> bool;
+  length = extern "String.length" : text -> int;
+  sub = extern "String.sub" : int -> int -> text -> text;
+  fromChar = extern "String.fromChar" : char -> text;
+  print = extern "String.print" : text -> ();
 };
 type text = Text.t;
-(++) = Text.++;
+(++) = Text.(++);
 print = Text.print;
 
 

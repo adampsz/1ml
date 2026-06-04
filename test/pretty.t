@@ -1,20 +1,3 @@
-  $ cat > prelude.1ml << 'EOF'
-  > type unit = extern "unit";
-  > type bool = extern "bool";
-  > type int = extern "int";
-  > type float = extern "float";
-  > type char = extern "char";
-  > type string = extern "string";
-  > 
-  > Opt :> { type t a } = { type t a = unit };
-  > type opt a = Opt.t a;
-  > 
-  > Alt :> { type t a b } = { type t a b = unit };
-  > type alt a b = Alt.t a b;
-  > 
-  > M :> { type t; type f a } = { type t = unit; type f a = unit };
-  > EOF
-
   $ ./deps/pp.exe "int"
   int
   $ ./deps/pp.exe "bool"
@@ -33,16 +16,16 @@
 
   $ ./deps/pp.exe "int -> bool"
   int -> bool
-  $ ./deps/pp.exe "int -> bool -> string"
-  int -> bool -> string
+  $ ./deps/pp.exe "int -> bool -> unit"
+  int -> bool -> unit
   $ ./deps/pp.exe "int => bool"
   int => bool
   $ ./deps/pp.exe "(x: int) -> bool"
   (x: int) -> bool
   $ ./deps/pp.exe "(x: int) => bool"
   (x: int) => bool
-  $ ./deps/pp.exe "(int -> bool) -> string"
-  (int -> bool) -> string
+  $ ./deps/pp.exe "(int -> bool) -> unit"
+  (int -> bool) -> unit
 
   $ ./deps/pp.exe "'a => a -> a"
   '(a: type) => a -> a
@@ -53,10 +36,10 @@
 
   $ ./deps/pp.exe "(int, bool)"
   (int, bool)
-  $ ./deps/pp.exe "(int, bool, string)"
-  (int, bool, string)
-  $ ./deps/pp.exe "(int, (bool, string))"
-  (int, (bool, string))
+  $ ./deps/pp.exe "(int, bool, unit)"
+  (int, bool, unit)
+  $ ./deps/pp.exe "(int, (bool, unit))"
+  (int, (bool, unit))
   $ ./deps/pp.exe "opt (int, bool)"
   opt (int, bool)
 
@@ -82,10 +65,6 @@
   $ ./deps/pp.exe "alt (opt int) (opt bool)"
   alt (opt int) (opt bool)
 
-  $ ./deps/pp.exe "M.t"
-  M.t
-  $ ./deps/pp.exe "M.f int"
-  M.f int
   $ ./deps/pp.exe "{ opt: unit; x: Opt.t int }"
   { opt: unit; x: Opt.t int }
 

@@ -28,6 +28,8 @@ let parse_stdin () =
   parse_with Parser.file lexbuf
 ;;
 
+let parse_string ~filename input = parse_string_with Parser.file ~filename input
+
 let parse_typ ~filename input = parse_string_with Parser.typ_eof ~filename input
 
 let parse_repl ~filename input =
