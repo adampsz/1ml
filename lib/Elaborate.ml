@@ -87,6 +87,8 @@ module Mapping = struct
     | MRecord of (S.Var.t * 'a t) list
     | MType of 'a
 
+  let empty = MRecord []
+
   let get p m =
     let rec aux = function
       | S.Path.Rev.RPNil, MType t -> Some t
@@ -148,7 +150,7 @@ end = struct
     }
 
   let empty =
-    { vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; current = Mapping.MRecord [] }
+    { vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; current = Mapping.empty }
   ;;
 
   let add_var x env =
@@ -157,11 +159,7 @@ end = struct
     { env with vars = S.Var.Map.add x x' env.vars }, x'
   ;;
 
-  let find_var x env =
-    match S.Var.Map.find_opt x env.vars with
-    | Some x' -> x'
-    | None -> Format.kasprintf failwith "unbound variable: %a" S.Var.pp x
-  ;;
+  let find_var x env = S.Var.Map.find x env.vars
 
   let add_tvar a env =
     let entries =
@@ -173,41 +171,28 @@ end = struct
       debug (fun m ->
         let pp_tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
         let pp_sep ppf () = Format.pp_print_string ppf "; " in
-        m
-          ~header:"tvar"
-          "%a -> [%a]"
-          S.TVar.pp
-          a
-          (Format.pp_print_list ~pp_sep pp_tvar)
-          (Mapping.to_list entries));
+        let m = m ~header:"tvar" "%a -> [%a]" in
+        m S.TVar.pp a (Format.pp_print_list ~pp_sep pp_tvar) (Mapping.to_list entries));
     { env with tvars = S.TVar.Map.add a entries env.tvars }, Mapping.to_list entries
   ;;
 
   let enter_mod a env =
-    { env with
-      current =
-        S.TVar.Map.find_opt a env.tvars |> Option.value ~default:(Mapping.MRecord [])
-    }
+    let current = S.TVar.Map.find_opt a env.tvars in
+    let current = Option.value ~default:Mapping.empty current in
+    { env with current }
   ;;
 
   let enter_field x env =
     let current =
       match env.current with
-      | Mapping.MRecord xs ->
-        Option.value ~default:(Mapping.MRecord []) (List.assoc_opt x xs)
-      | _ -> Mapping.MRecord []
+      | Mapping.MRecord xs -> Option.value ~default:Mapping.empty (List.assoc_opt x xs)
+      | _ -> assert false
     in
     { env with current }
   ;;
 
   let enter_lam _ env = env
-
-  let find_tvar a env =
-    match S.TVar.Map.find_opt a env.tvars with
-    | Some x -> x
-    | None -> Format.kasprintf failwith "unbound type variable: %a" S.TVar.pp a
-  ;;
-
+  let find_tvar a env = S.TVar.Map.find a env.tvars
   let module_tvars env = Mapping.to_list env.current
 end
 
@@ -218,8 +203,7 @@ module Type = struct
       (fun t m -> m ~header:"typ" "~> %t" (fun ppf -> T.Type.pp ppf t))
     @@ fun () ->
     match S.Type.view t with
-    | TInfer _ ->
-      Format.kasprintf failwith "unresolved type inference variable: %a" S.Type.pp t
+    | TInfer _ -> assert false
     | TPrim p -> T.Type.TPrim p
     | TAbstr p ->
       let (Ex t : Ex.typ) = path env p in
@@ -272,13 +256,10 @@ module Type = struct
     let rec aux env = function
       | S.Type.CType t -> [ (Ex (typ env t) : Ex.typ) ]
       | S.Type.CLam (a1, c2) ->
+        let lam (Ex a : Ex.tvar) (Ex c : Ex.typ) : Ex.typ = Ex (T.Type.TLam (a, c)) in
         let env, args = Env.add_tvar a1 env in
-        aux env c2
-        |> List.map (fun (Ex c : Ex.typ) ->
-          List.fold_right
-            (fun (Ex a : Ex.tvar) (Ex c : Ex.typ) -> (Ex (T.Type.TLam (a, c)) : Ex.typ))
-            args
-            (Ex c : Ex.typ))
+        let c2 = aux env c2 in
+        List.map (fun c -> List.fold_right lam args c) c2
       | S.Type.CRecord xs -> List.concat_map (fun (_, k) -> aux env k) xs
     in
     aux env c
@@ -306,7 +287,7 @@ module Elab = struct
         in
         assert (List.equal eq aks1 aks2)
       in
-      Env.module_tvars env, T.Expr.ECond (EVar (Env.find_var x env), e1, e2)
+      aks1, T.Expr.ECond (EVar (Env.find_var x env), e1, e2)
     | S.Expr.EStruct (xs, ts) ->
       let env, xs = List.fold_left_map bind env xs in
       let aux (x, _) = S.Var.name x, T.Expr.EVar (Env.find_var x env) in
@@ -338,7 +319,7 @@ module Elab = struct
         let e = Sugar.Expr.eff_app e eff (snd (expr env e2)) in
         e
       in
-      [], e
+      Env.module_tvars env, e
     | S.Expr.EType t -> [], Sugar.Expr.singleton (Type.typ env t)
     | S.Expr.EExtern (s, t) -> [], T.Expr.EExtern (s, Type.typ env t)
     | S.Expr.EWrap (x, _) -> [], Sugar.Expr.wrap (expr env x |> snd)
