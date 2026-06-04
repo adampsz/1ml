@@ -1,2 +1,5 @@
 (cram
- (deps ./deps/runner.exe ./deps/pp.exe %{bin:1ml}))
+ (deps
+  %{bin:1ml}
+  ./deps/pp.exe
+  (source_tree files)))

@@ -1,5 +1,3 @@
-(* @prelude *)
-
 log = {
     type text = extern "string";
     print = extern "String.print": text -> ();

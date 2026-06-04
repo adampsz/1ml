@@ -1,5 +1,3 @@
-(* @prelude *)
-
 ignore (x: _) = ();
 
 (* Fun *)
