@@ -94,9 +94,8 @@ module Extern = struct
   ;;
 
   let assert_eq l r =
-    if Value.equal l r
-    then ()
-    else Format.kasprintf failwith "expected %a, but got %a" Value.pp l Value.pp r
+    if not (Value.equal l r)
+    then Diagnostic.Error.error "expected %a, but got %a" Value.pp l Value.pp r
   ;;
 
   let rossberg = function
@@ -155,9 +154,8 @@ module Extern = struct
 
     let assert_eq l r =
       let open Lang.FOmega in
-      if Value.equal l r
-      then ()
-      else Format.kasprintf failwith "expected %a, but got %a" Value.pp l Value.pp r
+      if not (Value.equal l r)
+      then Format.kasprintf failwith "expected %a, but got %a" Value.pp l Value.pp r
     ;;
 
     let rossberg extern = function

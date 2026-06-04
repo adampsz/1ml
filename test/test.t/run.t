@@ -1,11 +1,9 @@
   $ run() {
   >   for file in */*.1ml; do
   >     echo ": $file"
-  >     ../runner.exe 1ml "$@" "$file"
+  >     ../deps/runner.exe 1ml "$@" "$file"
   >   done
   > }
-
-Elaborate to F-omega and evaluate there:
 
   $ run --f-omega
   : 00-basic/001-empty.1ml
@@ -38,8 +36,6 @@ Elaborate to F-omega and evaluate there:
   Map
   Tests
   true
-
-Evaluate directly with the interpreter:
 
   $ run
   : 00-basic/001-empty.1ml

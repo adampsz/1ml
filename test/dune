@@ -1,5 +1,2 @@
-(executable
- (name runner))
-
 (cram
- (deps ./runner.exe %{bin:1ml}))
+ (deps ./deps/runner.exe ./deps/pp.exe %{bin:1ml}))

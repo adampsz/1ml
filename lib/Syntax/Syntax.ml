@@ -15,7 +15,7 @@ let parse_file path =
   let chan =
     try In_channel.open_text path with
     | Sys_error _ as cause ->
-      Util.Diagnostic.Error.error ~cause "Couldn not open file `%s'" path
+      Util.Diagnostic.Error.error ~cause "Could not open file `%s'" path
   in
   let lexbuf = Lexing.from_channel chan in
   Lexing.set_filename lexbuf path;

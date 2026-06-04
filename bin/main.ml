@@ -29,7 +29,9 @@ let file inputs =
     let expr = Typecheck.Check.file Typecheck.Env.empty expr in
     if Args.fomega then ignore (run_fomega expr) else ignore (run expr)
   in
-  OneMl.Diagnostic.protect run
+  match OneMl.Diagnostic.protect run with
+  | Some () -> ()
+  | None -> exit 1
 ;;
 
 let repl () =

@@ -169,6 +169,7 @@ let protect ?(read = read) f =
   | Error.Error diag ->
     print ~read diag;
     Printexc.print_backtrace stderr;
+    flush stderr;
     None
 ;;
 

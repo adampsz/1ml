@@ -75,8 +75,6 @@ module Error = struct
     error ?span "expected a record type, but got `%a'" (pp_typ env) t
   ;;
 
-  let expected_record_kind ?span () = error ?span "expected a record kind"
-
   let expected_function_type ?span env t =
     error ?span "expected a function type, but got `%a'" (pp_typ env) t
   ;;
@@ -94,7 +92,6 @@ module Error = struct
   ;;
 
   let expected_pure_expression ?span () = error ?span "expected a pure expression"
-  let implicit_must_be_pure ?span () = error ?span "implicit function cannot be impure"
 
   let not_assignable ?span ?cause env t' t =
     let span =
@@ -227,7 +224,10 @@ module Subtype = struct
     let enter_mod a env = enter_mod a env, T.Type.Cons.empty
     let enter_field a (env, acc) = enter_field a env, acc
     let enter_lam a (env, acc) = enter_lam a env, acc
-    let subst (env, acc) t = T.Subst.typ (T.Path.var (Env.path env)) (T.Subst.one_opt acc) t
+
+    let subst (env, acc) t =
+      T.Subst.typ (T.Path.var (Env.path env)) (T.Subst.one_opt acc) t
+    ;;
   end
 
   let chain context f =
@@ -436,7 +436,7 @@ module Check = struct
         match k with
         | None -> []
         | Some (T.Kind.KRecord ks) -> ks
-        | Some _ -> Error.expected_record_kind ()
+        | Some _ -> assert false
       in
       let update old = set_kind xs k' old in
       T.Kind.opt_record (T.Var.assoc_update (T.Var.name x) update ks)
@@ -485,7 +485,7 @@ module Check = struct
       and ts = List.concat_map (fun (_, ts) -> ts) xs |> T.Var.normalize in
       T.Kind.opt_record ks, TRecord ts |> wrap ?span
     | S.TArrow (x, t1, eff, T.Effect.Impure, t2) ->
-      if eff == Implicit then Error.implicit_must_be_pure ?span ();
+      assert (eff <> Implicit);
       let x = T.Var.fresh (S.Node.data x) in
       let t1 = modu_typ env t1 in
       let env = Env.add_mod x t1 env in
@@ -590,7 +590,7 @@ module Check = struct
         match feff, eff with
         | Explicit, eff -> T.Type.Explicit eff
         | Implicit, Pure -> T.Type.Implicit
-        | Implicit, Impure -> Error.implicit_must_be_pure ?span ()
+        | Implicit, Impure -> assert false
       in
       let t2, e2 =
         match eff with

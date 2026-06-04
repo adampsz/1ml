@@ -66,6 +66,14 @@
     let invalid_escape ?lexbuf c = error ?lexbuf "invalid escape sequence %C" c
     let unterminated_string ?lexbuf = error ?lexbuf "unterminated string"
     let unterminated_comment ?lexbuf = error ?lexbuf "unterminated comment"
+
+    let _ =
+      let f = function
+        | Error -> Some "Syntax error"
+        | _ -> None
+      in
+      Printexc.register_printer f
+    ;;
   end
 }
 
