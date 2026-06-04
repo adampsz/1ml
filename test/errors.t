@@ -183,3 +183,20 @@
   $ echo 'do Assert.eq 1 2;' | 1ml -
   Error: expected 1, but got 2
   [1]
+
+Scope tracking (1ML §5.2): the value restriction makes `id id` impure, so its
+type cannot be generalised and the abstract type from `C` may not be inferred
+as the argument of `C.f` (it is out of scope where the inference variable was
+created).
+
+  $ printf "id : 'a => a -> a = fun x => x;\nG (x : int) = {M = {type t = int; v = x} :> {type t; v : t}; f = id id};\nC = G 3;\nx = C.f (C.M.v);\n" | 1ml -
+  Error: type `_' is not assignable to `C.M.t'
+  [1]
+
+The same applies across two applications of `G`: a later binding's abstract
+type is out of scope for an earlier one (but not vice versa, which `paper.1ml`
+checks succeeds).
+
+  $ printf "id : 'a => a -> a = fun x => x;\nG (x : int) = {M = {type t = int; v = x} :> {type t; v : t}; f = id id};\nC = G 3;\nC' = G 3;\nx = C.f (C'.M.v);\n" | 1ml -
+  Error: type `_' is not assignable to `C'.M.t'
+  [1]

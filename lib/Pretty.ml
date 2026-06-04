@@ -37,7 +37,7 @@ module Abstr = struct
   [@@deriving show]
 
   let rec concretize env = function
-    | T.Kind.KType -> T.Type.CType (TInfer (T.UVar.fresh env) |> T.Type.wrap)
+    | T.Kind.KType -> T.Type.CType (TInfer (T.UVar.fresh env T.Path.empty) |> T.Type.wrap)
     | T.Kind.KArrow (k1, k2) ->
       let x = T.TVar.fresh k1 in
       T.Type.CLam (x, concretize (T.TVar.Set.add x env) k2)

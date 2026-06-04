@@ -60,7 +60,7 @@ end = struct
   let enter_field x env = { env with base = T.Env.enter_field x env.base }
   let domain env = T.Env.domain env.base
   let path env = T.Env.path env.base
-  let uvar env = TInfer (T.UVar.fresh (domain env)) |> wrap
+  let uvar env = TInfer (T.UVar.fresh (domain env) (path env)) |> wrap
   let eff t env = T.Type.eff (T.Path.var (path env)) t
   let base env = env.base
 end
@@ -111,13 +111,13 @@ module Error = struct
 end
 
 module Implicit = struct
-  let rec concretize env = function
-    | T.Kind.KType -> T.Type.CType (TInfer (T.UVar.fresh env) |> wrap)
+  let rec concretize env path = function
+    | T.Kind.KType -> T.Type.CType (TInfer (T.UVar.fresh env path) |> wrap)
     | T.Kind.KArrow (k1, k2) ->
       let x = T.TVar.fresh k1 in
-      T.Type.CLam (x, concretize (T.TVar.Set.add x env) k2)
+      T.Type.CLam (x, concretize (T.TVar.Set.add x env) path k2)
     | T.Kind.KRecord ks ->
-      T.Type.CRecord (List.map (fun (x, k) -> x, concretize env k) ks)
+      T.Type.CRecord (List.map (fun (x, k) -> x, concretize env path k) ks)
   ;;
 
   let rec materialize env t =
@@ -201,12 +201,12 @@ module Implicit = struct
     ignore (infers level f t e)
   ;;
 
-  let instantiate env t =
+  let instantiate env path t =
     let rec aux (inst, t) =
       match view t with
       | TArrow (_, t1, Implicit, t2) ->
         let a, t1 = T.Type.as_module t1 in
-        let tc = concretize env (T.TVar.kind a) in
+        let tc = concretize env path (T.TVar.kind a) in
         let t1 = T.Subst.typ a (T.Subst.one tc) t1
         and t2 = T.Subst.typ a (T.Subst.one tc) t2 in
         aux ((fun e -> T.Expr.EApp (inst e, tc, Implicit, materialize env t1)), t2)
@@ -261,7 +261,7 @@ module Subtype = struct
       let acc, f = typ (Env.add_tvar a env, acc) t' t2 in
       acc, fun e -> T.Expr.EFun (T.Var.fresh "a", t1, Implicit, f e)
     | TArrow (_, _, Implicit, _), _ ->
-      let inst, t' = Implicit.instantiate (Env.domain env) t' in
+      let inst, t' = Implicit.instantiate (Env.domain env) (Env.path env) t' in
       let acc, f = typ (env, acc) t' t in
       acc, fun e -> f (inst e)
     (* Modules *)
@@ -455,19 +455,19 @@ module Check = struct
     let span = S.Node.span t in
     match S.Node.data t with
     | S.TPrim p -> None, TPrim p |> wrap ?span
-    | S.THole -> None, TInfer (T.UVar.fresh (Env.domain env)) |> wrap ?span
+    | S.THole -> None, TInfer (T.UVar.fresh (Env.domain env) (Env.path env)) |> wrap ?span
     | S.TType ->
       let abstr = TAbstr (T.Type.path_to_abstr (Env.path env)) |> wrap ?span in
       Some T.Kind.KType, TSingleton abstr |> wrap ?span
     | S.TExpr e ->
       let eff, ty, _ = modu_expr env e in
-      let _, ty = Implicit.instantiate (Env.domain env) ty in
+      let _, ty = Implicit.instantiate (Env.domain env) (Env.path env) ty in
       (match eff, view ty with
        | T.Effect.Pure, TSingleton ty ->
          let k, ty, _ = path_prepend env ty in
          k, T.Type.with_span ?span ty
        | T.Effect.Pure, TInfer z ->
-         let ty = TInfer (T.UVar.fresh (Env.domain env)) |> wrap ?span in
+         let ty = TInfer (T.UVar.fresh (Env.domain env) (Env.path env)) |> wrap ?span in
          assert (T.Type.resolve z (TSingleton ty |> wrap ?span));
          None, ty
        | T.Effect.Pure, _ -> Error.expected_singleton_type ?span env ty
@@ -573,7 +573,9 @@ module Check = struct
         | TRecord ts -> ts
         | TInfer z ->
           let x = T.Var.fresh (S.Node.data x) in
-          let ts = [ x, TInfer (T.UVar.fresh (Env.domain env)) |> wrap ?span ] in
+          let ts =
+            [ x, TInfer (T.UVar.fresh (Env.domain env) (Env.path env)) |> wrap ?span ]
+          in
           assert (T.Type.resolve z (T.Type.TRecord ts |> wrap ?span));
           ts
         | _ -> Error.expected_record_type ?span:(S.Node.span e) env t
@@ -606,13 +608,13 @@ module Check = struct
     | S.EApp (x, x') ->
       let dom = Env.domain env in
       let xv, t = Env.find ?span:(S.Node.span x) (S.Node.data x) env in
-      let inst, t = Implicit.instantiate dom t in
+      let inst, t = Implicit.instantiate dom (Env.path env) t in
       let (a1, t1), eff, t2 =
         match view t with
         | TArrow (_, t1, Explicit eff, t2) -> T.Type.as_module t1, eff, t2
         | TInfer z ->
-          let t1 = TInfer (T.UVar.fresh dom) |> wrap ?span
-          and t2 = TInfer (T.UVar.fresh dom) |> wrap ?span in
+          let t1 = TInfer (T.UVar.fresh dom (Env.path env)) |> wrap ?span
+          and t2 = TInfer (T.UVar.fresh dom (Env.path env)) |> wrap ?span in
           let tf = TArrow (T.Var.fresh "a", t1, Explicit Impure, t2) |> wrap ?span in
           assert (T.Type.resolve z tf);
           (T.TVar.empty, t1), T.Effect.Impure, t2
@@ -651,7 +653,7 @@ module Check = struct
     | S.EUnwrap (x, t) ->
       let dom = Env.domain env in
       let xv, t1 = Env.find ?span:(S.Node.span x) (S.Node.data x) env in
-      let inst, t1 = Implicit.instantiate dom t1 in
+      let inst, t1 = Implicit.instantiate dom (Env.path env) t1 in
       let t2 = modu_typ env t in
       let t2 =
         match view t2 with

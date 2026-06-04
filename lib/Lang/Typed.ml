@@ -29,6 +29,7 @@ module Var : sig
   val id : t -> int
   val name : t -> string
   val equal : t -> t -> bool
+  val compare : t -> t -> int
   val assoc : string -> (t * 'a) list -> t * 'a
   val assoc_opt : string -> (t * 'a) list -> (t * 'a) option
   val assoc_update : string -> ('a option -> 'a option) -> (t * 'a) list -> (t * 'a) list
@@ -162,126 +163,6 @@ end = struct
     end)
 end
 
-module UVar : sig
-  type 'a t
-
-  module Level : sig
-    type t
-
-    val get : t -> int
-  end
-
-  type level = Level.t
-
-  val fresh : TVar.Set.t -> 'a t
-  val scope : 'a t -> TVar.Set.t
-  val level : 'a t -> level
-  val id : 'a t -> int
-  val equal : 'a t -> 'a t -> bool
-  val get : 'a t -> 'a option
-  val set : 'a t -> 'a -> unit
-  val view : 'a -> ('a -> 'a) -> 'a t -> 'a
-  val resolve : ('a t -> 'a) -> 'a t -> 'a t -> unit
-  val extrude : level -> 'a t -> unit
-  val pp : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a t -> unit
-
-  (* Levels *)
-
-  val stamp : unit -> level
-  val newer : level -> 'a t -> bool
-end = struct
-  module UID = Counter.Make ()
-  module Level = Counter.Make ()
-
-  type 'a state =
-    | Undet of TVar.Set.t * Level.t * UID.t
-    | Det of 'a
-
-  type 'a t = 'a state ref
-  type level = Level.t
-
-  let stamp () =
-    let level = Level.next () in
-    debug (fun m -> m ~header:"uvar.stamp" "@%d" (Level.get level));
-    level
-  ;;
-
-  let newer level z =
-    match !z with
-    | Undet (_, l, _) -> l >= level
-    | _ -> false
-  ;;
-
-  let fresh scope =
-    let u = ref (Undet (scope, Level.current (), UID.next ())) in
-    debug (fun m ->
-      let m = m ~header:"uvar.fresh" "#T%d@%d" in
-      m (UID.current () |> UID.get) (Level.current () |> Level.get));
-    u
-  ;;
-
-  let equal = ( == )
-
-  let scope = function
-    | { contents = Undet (s, _, _) } -> s
-    | _ -> invalid_arg "UVar.scope"
-  ;;
-
-  let level = function
-    | { contents = Undet (_, l, _) } -> l
-    | _ -> invalid_arg "UVar.level"
-  ;;
-
-  let id = function
-    | { contents = Undet (_, _, id) } -> UID.get id
-    | _ -> invalid_arg "UVar.id"
-  ;;
-
-  let get = function
-    | { contents = Det v } -> Some v
-    | _ -> None
-  ;;
-
-  let set z v =
-    match !z with
-    | Undet _ -> z := Det v
-    | Det _ -> invalid_arg "UVar.set"
-  ;;
-
-  let view t f = function
-    | { contents = Det t } as u ->
-      let t = f t in
-      u := Det t;
-      t
-    | _ -> t
-  ;;
-
-  let extrude level z' =
-    match !z' with
-    | Undet (s', l', x') when l' > level -> z' := Undet (s', level, x')
-    | _ -> ()
-  ;;
-
-  let resolve f z' z =
-    match !z', !z with
-    | Undet (_, _, x'), Undet (_, _, x) when UID.equal x' x -> ()
-    | Undet (s', l', _), Undet (s, l, _) ->
-      let t = f (ref (Undet (TVar.Set.inter s' s, min l' l, UID.next ()))) in
-      set z t;
-      set z' t
-    | _, _ -> invalid_arg "UVar.resolve"
-  ;;
-
-  let pp pp ppf z =
-    match !z with
-    | Det x -> pp ppf x
-    | Undet (s, l, x) ->
-      let pp_sep ppf () = Format.pp_print_string ppf "," in
-      let pp_scope ppf s = Format.pp_print_iter TVar.Set.iter ~pp_sep TVar.pp ppf s in
-      Format.fprintf ppf "?%d@@%d{%a}" (UID.get x) (Level.get l) pp_scope s
-  ;;
-end
-
 module Path = struct
   type 'a path =
     | PVar of TVar.t
@@ -355,6 +236,152 @@ module Path = struct
   ;;
 
   let rev p = rev_map Fun.id p
+
+  let compare p' p =
+    let rec aux r' r =
+      match r', r with
+      | Rev.RPNil, Rev.RPNil -> Some 0
+      | Rev.RPNil, _ -> Some (-1)
+      | _, Rev.RPNil -> Some 1
+      | Rev.RPProj (r', x'), Rev.RPProj (r, x) ->
+        (match Var.compare x' x with
+         | 0 -> aux r' r
+         | c -> Some c)
+      | Rev.RPProj _, _ -> None
+      | Rev.RPApp (r', _), Rev.RPApp (r, _) -> aux r' r
+      | Rev.RPApp _, _ -> None
+    in
+    let a', r' = rev p'
+    and a, r = rev p in
+    if TVar.equal a' a then aux r' r else None
+  ;;
+end
+
+module UVar : sig
+  type 'a t
+
+  module Level : sig
+    type t
+
+    val get : t -> int
+  end
+
+  type level = Level.t
+
+  val fresh : TVar.Set.t -> TVar.t Path.t -> 'a t
+  val scope : 'a t -> TVar.Set.t
+  val paths : 'a t -> TVar.t Path.t list
+  val level : 'a t -> level
+  val id : 'a t -> int
+  val equal : 'a t -> 'a t -> bool
+  val get : 'a t -> 'a option
+  val set : 'a t -> 'a -> unit
+  val view : 'a -> ('a -> 'a) -> 'a t -> 'a
+  val resolve : ('a t -> 'a) -> 'a t -> 'a t -> unit
+  val extrude : level -> 'a t -> unit
+  val pp : (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a t -> unit
+
+  (* Levels *)
+
+  val stamp : unit -> level
+  val newer : level -> 'a t -> bool
+end = struct
+  module UID = Counter.Make ()
+  module Level = Counter.Make ()
+
+  type 'a state =
+    | Undet of TVar.Set.t * TVar.t Path.t list * Level.t * UID.t
+    | Det of 'a
+
+  type 'a t = 'a state ref
+  type level = Level.t
+
+  let stamp () =
+    let level = Level.next () in
+    debug (fun m -> m ~header:"uvar.stamp" "@%d" (Level.get level));
+    level
+  ;;
+
+  let newer level z =
+    match !z with
+    | Undet (_, _, l, _) -> l >= level
+    | _ -> false
+  ;;
+
+  let fresh scope path =
+    let u = ref (Undet (scope, [ path ], Level.current (), UID.next ())) in
+    debug (fun m ->
+      let m = m ~header:"uvar.fresh" "#T%d@%d" in
+      m (UID.current () |> UID.get) (Level.current () |> Level.get));
+    u
+  ;;
+
+  let equal = ( == )
+
+  let scope = function
+    | { contents = Undet (s, _, _, _) } -> s
+    | _ -> invalid_arg "UVar.scope"
+  ;;
+
+  let paths = function
+    | { contents = Undet (_, p, _, _) } -> p
+    | _ -> invalid_arg "UVar.paths"
+  ;;
+
+  let level = function
+    | { contents = Undet (_, _, l, _) } -> l
+    | _ -> invalid_arg "UVar.level"
+  ;;
+
+  let id = function
+    | { contents = Undet (_, _, _, id) } -> UID.get id
+    | _ -> invalid_arg "UVar.id"
+  ;;
+
+  let get = function
+    | { contents = Det v } -> Some v
+    | _ -> None
+  ;;
+
+  let set z v =
+    match !z with
+    | Undet _ -> z := Det v
+    | Det _ -> invalid_arg "UVar.set"
+  ;;
+
+  let view t f = function
+    | { contents = Det t } as u ->
+      let t = f t in
+      u := Det t;
+      t
+    | _ -> t
+  ;;
+
+  let extrude level z' =
+    match !z' with
+    | Undet (s', b', l', x') when l' > level -> z' := Undet (s', b', level, x')
+    | _ -> ()
+  ;;
+
+  let resolve f z' z =
+    match !z', !z with
+    | Undet (_, _, _, x'), Undet (_, _, _, x) when UID.equal x' x -> ()
+    | Undet (s', p', l', _), Undet (s, p, l, _) ->
+      let z'' = Undet (TVar.Set.inter s' s, p' @ p, min l' l, UID.next ()) in
+      let t = f (ref z'') in
+      set z t;
+      set z' t
+    | _, _ -> invalid_arg "UVar.resolve"
+  ;;
+
+  let pp pp ppf z =
+    match !z with
+    | Det x -> pp ppf x
+    | Undet (s, _, l, x) ->
+      let pp_sep ppf () = Format.pp_print_string ppf "," in
+      let pp_scope ppf s = Format.pp_print_iter TVar.Set.iter ~pp_sep TVar.pp ppf s in
+      Format.fprintf ppf "?%d@@%d{%a}" (UID.get x) (Level.get l) pp_scope s
+  ;;
 end
 
 module Type = struct
@@ -536,13 +563,20 @@ module Type = struct
 
   let eff a t = if is_generative a t then Effect.Impure else Effect.Pure
 
+  let forbidden p q =
+    match Path.compare q p with
+    | Some c -> c >= 0
+    | None -> false
+  ;;
+
   let extrude z t =
     let rec typ env t =
       match view t with
       | TInfer z' ->
         UVar.extrude (UVar.level z) z';
         true
-      | TAbstr p -> path env p
+      | TAbstr p ->
+        path env p && List.for_all (fun p' -> not (forbidden p' p)) (UVar.paths z)
       | TPrim _ -> true
       | TArrow (_, t1, _, t2) ->
         let a, t1 = as_module t1 in
@@ -618,7 +652,8 @@ module Rename = struct
       let a, rename = freshen a rename in
       let t = TArrow (x, as_type a (typ rename t1), eff, typ rename t2) in
       Type.wrap ?span t
-    | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ rename t) xs) |> Type.wrap ?span
+    | TRecord xs ->
+      TRecord (List.map (fun (x, t) -> x, typ rename t) xs) |> Type.wrap ?span
     | TSingleton t -> TSingleton (typ rename t) |> Type.wrap ?span
     | TWrapped t -> TWrapped (typ rename t) |> Type.wrap ?span
     | TMod (a, t) ->
@@ -713,7 +748,8 @@ module Equal = struct
     match c', c with
     | CType t', CType t -> typ ?unify t t'
     | CType _, _ -> false
-    | CLam (a', c'), CLam (a, c) -> cons ?unify (Rename.cons ~rename:(Rename.one a' a) c') c
+    | CLam (a', c'), CLam (a, c) ->
+      cons ?unify (Rename.cons ~rename:(Rename.one a' a) c') c
     | CLam _, _ -> false
     | CRecord ts', CRecord ts ->
       List.equal (fun (x', c') (x, c) -> Var.equal x' x && cons ?unify c' c) ts' ts
