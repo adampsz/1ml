@@ -128,6 +128,10 @@ module Mapping = struct
     in
     aux [] k
   ;;
+
+  let of_tvar a =
+    of_kind (S.TVar.kind a) |> map (fun (Ex k : Ex.kind) : Ex.tvar -> Ex (T.TVar.fresh k))
+  ;;
 end
 
 module Env : sig
@@ -136,22 +140,20 @@ module Env : sig
   val empty : t
   val add_var : S.Var.t -> t -> t * T.Var.t
   val find_var : S.Var.t -> t -> T.Var.t
+  val add_tvar : S.TVar.t -> t -> t * Ex.tvar list
+  val find_tvar : S.TVar.t -> t -> Ex.tvar Mapping.t
   val enter_mod : S.TVar.t -> t -> t
   val enter_field : S.Var.t -> t -> t
   val enter_lam : S.TVar.t -> t -> t
-  val add_tvar : S.TVar.t -> t -> t * Ex.tvar list
-  val find_tvar : S.TVar.t -> t -> Ex.tvar Mapping.t
-  val module_tvars : t -> Ex.tvar list
+  val path : t -> S.TVar.t S.Path.t
 end = struct
   type t =
     { vars : T.Var.t S.Var.Map.t
     ; tvars : Ex.tvar Mapping.t S.TVar.Map.t
-    ; current : Ex.tvar Mapping.t
+    ; path : S.TVar.t S.Path.t
     }
 
-  let empty =
-    { vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; current = Mapping.empty }
-  ;;
+  let empty = { vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; path = S.Path.empty }
 
   let add_var x env =
     let x' = T.Var.fresh ~name:(S.Var.name x) () in
@@ -162,38 +164,15 @@ end = struct
   let find_var x env = S.Var.Map.find x env.vars
 
   let add_tvar a env =
-    let entries =
-      Mapping.of_kind (S.TVar.kind a)
-      |> Mapping.map (fun (Ex k : Ex.kind) -> (Ex (T.TVar.fresh k) : Ex.tvar))
-    in
-    if not (S.Kind.is_empty (S.TVar.kind a))
-    then
-      debug (fun m ->
-        let pp_tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
-        let pp_sep ppf () = Format.pp_print_string ppf "; " in
-        let m = m ~header:"tvar" "%a -> [%a]" in
-        m S.TVar.pp a (Format.pp_print_list ~pp_sep pp_tvar) (Mapping.to_list entries));
-    { env with tvars = S.TVar.Map.add a entries env.tvars }, Mapping.to_list entries
+    let mapping = Mapping.of_tvar a in
+    { env with tvars = S.TVar.Map.add a mapping env.tvars }, Mapping.to_list mapping
   ;;
 
-  let enter_mod a env =
-    let current = S.TVar.Map.find_opt a env.tvars in
-    let current = Option.value ~default:Mapping.empty current in
-    { env with current }
-  ;;
-
-  let enter_field x env =
-    let current =
-      match env.current with
-      | Mapping.MRecord xs -> Option.value ~default:Mapping.empty (List.assoc_opt x xs)
-      | _ -> assert false
-    in
-    { env with current }
-  ;;
-
-  let enter_lam _ env = env
   let find_tvar a env = S.TVar.Map.find a env.tvars
-  let module_tvars env = Mapping.to_list env.current
+  let enter_mod a env = { env with path = S.Path.PVar a }
+  let enter_field x env = { env with path = S.Path.PProj (env.path, x) }
+  let enter_lam a env = { env with path = S.Path.PApp (env.path, a) }
+  let path env = env.path
 end
 
 module Type = struct
@@ -230,27 +209,19 @@ module Type = struct
       (fun m -> m ~header:"path" "")
       (fun (Ex t : Ex.typ) m -> m ~header:"path" "~> %t" (fun ppf -> T.Type.pp ppf t))
     @@ fun () ->
-    let rec aux acc m = function
-      | S.Path.Rev.RPNil ->
-        (match m with
-         | Mapping.MType (Ex a : Ex.tvar) -> acc (Ex (T.Type.TVar a) : Ex.typ)
-         | _ -> assert false)
-      | S.Path.Rev.RPProj (r, x) ->
-        let m =
-          match m with
-          | Mapping.MRecord xs ->
-            (match List.assoc_opt x xs with
-             | Some m -> m
-             | None -> assert false)
-          | _ -> assert false
-        in
-        aux acc m r
-      | S.Path.Rev.RPApp (r1, tc) ->
-        let t2 = cons env tc in
-        aux (fun t1 -> List.fold_left Sugar.Type.app (acc t1) t2) m r1
+    let rec aux = function
+      | S.Path.PVar a -> Env.find_tvar a env, Fun.id
+      | S.Path.PApp (p, tc) ->
+        (match aux p with
+         | m, app -> m, fun t1 -> List.fold_left Sugar.Type.app (app t1) (cons env tc))
+      | S.Path.PProj (p, x) ->
+        (match aux p with
+         | MRecord ms, app -> List.assoc x ms, app
+         | _, _ -> assert false)
     in
-    let a, r = S.Path.rev p in
-    aux Fun.id (Env.find_tvar a env) r
+    match aux p with
+    | MType (Ex t), app -> app (Ex (T.Type.TVar t))
+    | _, _ -> assert false
 
   and cons env tc =
     let rec aux env = function
@@ -269,10 +240,7 @@ end
 module Elab = struct
   let rec expr env e =
     trace
-      (fun m ->
-         let tvar ppf (Ex a : Ex.tvar) = T.TVar.pp ppf a in
-         let m = m ~header:"expr" "%a @@ %a" in
-         m S.Expr.pp e (Format.pp_print_list tvar) (Env.module_tvars env))
+      (fun m -> m ~header:"expr" "%a" S.Expr.pp e)
       (fun (_, e) m -> m ~header:"expr" "~> %a" T.Expr.pp e)
     @@ fun () ->
     match e with
@@ -319,7 +287,7 @@ module Elab = struct
         let e = Sugar.Expr.eff_app e eff (snd (expr env e2)) in
         e
       in
-      Env.module_tvars env, e
+      [], e
     | S.Expr.EType t -> [], Sugar.Expr.singleton (Type.typ env t)
     | S.Expr.EExtern (s, t) -> [], T.Expr.EExtern (s, Type.typ env t)
     | S.Expr.EWrap (e, _) -> [], Sugar.Expr.wrap (expr env e |> snd)
@@ -351,7 +319,18 @@ module Elab = struct
         assert (List.equal eq aks aks')
       in
       [], e
-    | S.Expr.EUse e -> Env.module_tvars env, snd (expr env e)
+    | S.Expr.EUse e ->
+      let rec aux = function
+        | S.Path.PVar a -> Env.find_tvar a env
+        | S.Path.PApp (p, _) -> aux p
+        | S.Path.PProj (p, x) ->
+          (match aux p with
+           | MRecord ms -> List.assoc x ms
+           | _ -> assert false)
+      in
+      let aks, e = expr env e in
+      assert (List.is_empty aks);
+      aux (Env.path env) |> Mapping.to_list, e
 
   and bind env b =
     trace
