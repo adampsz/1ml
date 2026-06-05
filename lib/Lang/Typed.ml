@@ -437,7 +437,7 @@ module Type = struct
 
     let rec kind = function
       | CType _ -> Kind.KType
-      | CLam (x, c) -> Kind.KArrow (TVar.kind x, kind c)
+      | CLam (a, tc) -> Kind.KArrow (TVar.kind a, kind tc)
       | CRecord xs -> Kind.KRecord (List.Assoc.map kind xs)
     ;;
 
@@ -453,62 +453,62 @@ module Type = struct
       aux (PVar a) (TVar.kind a)
     ;;
 
-    let is_tvar a c =
+    let is_tvar a tc =
       let rec aux = function
         | CType t ->
           (match view t with
            | TAbstr p -> TVar.equal a (Path.var p)
            | _ -> false)
-        | CLam (_, c) -> aux c
-        | CRecord xs -> List.for_all (fun (_, c) -> aux c) xs
+        | CLam (_, tc) -> aux tc
+        | CRecord xs -> List.for_all (fun (_, tc) -> aux tc) xs
       in
-      Kind.equal (kind c) (TVar.kind a) && aux c
+      Kind.equal (kind tc) (TVar.kind a) && aux tc
     ;;
 
     let pp = pp_cons
 
-    let lookup f p c =
+    let lookup f p tc =
       let rec aux = function
         | Path.Rev.RPNil, CType t -> Some t
         | Path.Rev.RPNil, _ -> invalid_arg "Cons.lookup"
         | Path.Rev.RPProj (r, x), CRecord xs ->
           (match List.assoc_opt x xs with
-           | Some c -> aux (r, c)
+           | Some tc -> aux (r, tc)
            | None -> None)
         | Path.Rev.RPProj _, _ -> invalid_arg "Cons.lookup"
-        | Path.Rev.RPApp (r, x), CLam (a, c) -> aux (r, f a x c)
+        | Path.Rev.RPApp (r, x), CLam (a, tc) -> aux (r, f a x tc)
         | Path.Rev.RPApp _, _ -> invalid_arg "Cons.lookup"
       in
       let _, r = Path.rev p in
-      aux (r, c)
+      aux (r, tc)
     ;;
 
-    let get p c =
-      let f a x c =
+    let get p tc =
+      let f a x tc =
         assert (TVar.equal a x);
-        c
+        tc
       in
-      lookup f p c
+      lookup f p tc
     ;;
 
-    let mem p c = Option.is_some (lookup (fun _ _ c -> c) p c)
+    let mem p tc = Option.is_some (lookup (fun _ _ tc -> tc) p tc)
 
-    let set p t c =
+    let set p t tc =
       let rec aux = function
         | Path.Rev.RPNil, (None | Some (CType _)) -> CType t
         | Path.Rev.RPNil, Some _ -> invalid_arg "Cons.set"
         | Path.Rev.RPProj (r, x), None -> CRecord [ x, aux (r, None) ]
         | Path.Rev.RPProj (r, x), Some (CRecord xs) ->
-          CRecord (List.Assoc.update x (fun c -> Some (aux (r, c))) xs)
+          CRecord (List.Assoc.update x (fun tc -> Some (aux (r, tc))) xs)
         | Path.Rev.RPProj _, _ -> invalid_arg "Cons.set"
-        | Path.Rev.RPApp (r, x), None -> CLam (x, aux (r, None))
-        | Path.Rev.RPApp (r, a), Some (CLam (x, c)) ->
+        | Path.Rev.RPApp (r, a), None -> CLam (a, aux (r, None))
+        | Path.Rev.RPApp (r, a), Some (CLam (x, tc)) ->
           assert (TVar.equal a x);
-          CLam (x, aux (r, Some c))
+          CLam (x, aux (r, Some tc))
         | Path.Rev.RPApp _, _ -> invalid_arg "Cons.set"
       in
       let _, r = Path.rev p in
-      aux (r, c)
+      aux (r, tc)
     ;;
   end
 
@@ -541,12 +541,12 @@ module Type = struct
       | TMod (a, t) -> typ (TVar.Set.add a env) t
     and path env = function
       | Path.PVar a -> not (TVar.Set.mem a env)
-      | Path.PApp (p, t) -> path env p && cons env t
+      | Path.PApp (p, tc) -> path env p && cons env tc
       | Path.PProj (p, _) -> path env p
     and cons env = function
       | CType t -> typ env t
-      | CLam (_, t) -> cons env t
-      | CRecord xs -> List.for_all (fun (_, t) -> cons env t) xs
+      | CLam (_, tc) -> cons env tc
+      | CRecord xs -> List.for_all (fun (_, tc) -> cons env tc) xs
     in
     typ TVar.Set.empty t
   ;;
@@ -587,12 +587,12 @@ module Type = struct
       | TMod (a, t) -> typ (TVar.Set.add a env) t
     and path env = function
       | Path.PVar a -> TVar.Set.mem a env
-      | Path.PApp (p, c) -> path env p && cons env c
+      | Path.PApp (p, tc) -> path env p && cons env tc
       | Path.PProj (p, _) -> path env p
     and cons env = function
       | CType t -> typ env t
-      | CLam (a, t) -> cons (TVar.Set.add a env) t
-      | CRecord ts -> List.for_all (fun (_, t) -> cons env t) ts
+      | CLam (a, tc) -> cons (TVar.Set.add a env) tc
+      | CRecord ts -> List.for_all (fun (_, tc) -> cons env tc) ts
     in
     typ (UVar.scope z) t
   ;;
@@ -610,12 +610,12 @@ module Type = struct
       | TMod (_, t) -> typ t
     and path = function
       | Path.PVar _ -> false
-      | Path.PApp (p, c) -> path p || cons c
+      | Path.PApp (p, tc) -> path p || cons tc
       | Path.PProj (p, _) -> path p
     and cons = function
       | CType t -> typ t
-      | CLam (_, c) -> cons c
-      | CRecord ts -> List.exists (fun (_, c) -> cons c) ts
+      | CLam (_, tc) -> cons tc
+      | CRecord ts -> List.exists (fun (_, tc) -> cons tc) ts
     in
     typ t
   ;;
@@ -660,8 +660,8 @@ module Rename = struct
       TMod (a, typ rename t) |> Type.wrap ?span
 
   and cons rename = function
-    | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons rename t) xs)
-    | CLam (a, t) -> freshen a rename |> fun (a, rename) -> CLam (a, cons rename t)
+    | CRecord xs -> CRecord (List.map (fun (x, tc) -> x, cons rename tc) xs)
+    | CLam (a, tc) -> freshen a rename |> fun (a, rename) -> CLam (a, cons rename tc)
     | CType t -> CType (typ rename t)
 
   and path ?span rename p =
@@ -671,7 +671,7 @@ module Rename = struct
   ;;
 
   let typ ?(rename = TVar.Map.empty) t = typ rename t
-  let cons ?(rename = TVar.Map.empty) c = cons rename c
+  let cons ?(rename = TVar.Map.empty) tc = cons rename tc
   let one a' a = TVar.Map.singleton a' a
 end
 
@@ -693,8 +693,8 @@ module Subst = struct
     | TMod (b, t) -> TMod (b, typ a f t) |> Type.wrap ?span
 
   and cons a f = function
-    | CRecord xs -> CRecord (List.map (fun (x, t) -> x, cons a f t) xs)
-    | CLam (b, t) -> CLam (b, cons a f t)
+    | CRecord xs -> CRecord (List.map (fun (x, tc) -> x, cons a f tc) xs)
+    | CLam (b, tc) -> CLam (b, cons a f tc)
     | CType t -> CType (typ a f t)
 
   and path ?span a f p =
@@ -703,14 +703,14 @@ module Subst = struct
     if TVar.equal b a then f p else TAbstr p |> Type.wrap ?span
   ;;
 
-  let rec one c p =
-    match Type.Cons.lookup (fun a t c -> cons a (one t) c) p c with
+  let rec one tc p =
+    match Type.Cons.lookup (fun a tc1 tc2 -> cons a (one tc1) tc2) p tc with
     | Some t -> t
     | None -> TAbstr p |> Type.wrap
   ;;
 
   let one_opt = function
-    | Some c -> one c
+    | Some tc -> one tc
     | None -> fun p -> TAbstr p |> Type.wrap
   ;;
 end
@@ -743,15 +743,15 @@ module Equal = struct
     | TMod (a', t'), TMod (a, t) -> typ ~unify (Rename.typ ~rename:(Rename.one a' a) t') t
     | TMod _, _ -> false
 
-  and cons ?unify c' c =
-    match c', c with
+  and cons ?unify tc' tc =
+    match tc', tc with
     | CType t', CType t -> typ ?unify t' t
     | CType _, _ -> false
-    | CLam (a', c'), CLam (a, c) ->
-      cons ?unify (Rename.cons ~rename:(Rename.one a' a) c') c
+    | CLam (a', tc'), CLam (a, tc) ->
+      cons ?unify (Rename.cons ~rename:(Rename.one a' a) tc') tc
     | CLam _, _ -> false
     | CRecord ts', CRecord ts ->
-      List.equal (fun (x', c') (x, c) -> Var.equal x' x && cons ?unify c' c) ts' ts
+      List.equal (fun (x', tc') (x, tc) -> Var.equal x' x && cons ?unify tc' tc) ts' ts
     | CRecord _, _ -> false
   ;;
 end
@@ -857,14 +857,14 @@ module Invariant = struct
   and path env = function
     | Path.PVar a -> Env.find_tvar a env
     | Path.PProj (p, _) -> path env p
-    | Path.PApp (p, c) ->
-      cons env c;
+    | Path.PApp (p, tc) ->
+      cons env tc;
       path env p
 
   and cons env = function
     | Type.CType t -> typ env t
-    | Type.CLam (a, c) -> cons (Env.add_tvar a env) c
-    | Type.CRecord xs -> List.iter (fun (_, c) -> cons env c) xs
+    | Type.CLam (a, tc) -> cons (Env.add_tvar a env) tc
+    | Type.CRecord xs -> List.iter (fun (_, tc) -> cons env tc) xs
   ;;
 
   let rec expr env e =

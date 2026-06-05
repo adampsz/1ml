@@ -161,11 +161,11 @@ module Implicit = struct
     and path acc = function
       | T.Path.PVar _ -> acc
       | T.Path.PProj (p, _) -> path acc p
-      | T.Path.PApp (p, c) -> cons (path acc p) c
+      | T.Path.PApp (p, tc) -> cons (path acc p) tc
     and cons acc = function
       | T.Type.CType t -> typ acc t
-      | T.Type.CLam (_, c) -> cons acc c
-      | T.Type.CRecord ts -> List.fold_left (fun acc (_, c) -> cons acc c) acc ts
+      | T.Type.CLam (_, tc) -> cons acc tc
+      | T.Type.CRecord ts -> List.fold_left (fun acc (_, tc) -> cons acc tc) acc ts
     and expr acc e =
       match e with
       | T.Expr.EVar _ | T.Expr.EConst _ -> acc
@@ -179,7 +179,7 @@ module Implicit = struct
       | T.Expr.EExtern (_, t) -> typ acc t
       | T.Expr.EWrap (e, t) -> typ (expr acc e) t
       | T.Expr.EUnwrap e -> expr acc e
-      | T.Expr.ESeal (e, c, t) -> typ (cons (expr acc e) c) t
+      | T.Expr.ESeal (e, tc, t) -> typ (cons (expr acc e) tc) t
       | T.Expr.EMod (_, e) -> expr acc e
       | T.Expr.EUse e -> expr acc e
     and bind acc = function
@@ -332,8 +332,8 @@ module Subtype = struct
         in
         chain (fun cause -> Error.in_field ~cause (T.Var.name x))
         @@ fun () ->
-        let acc, c = typ (Env.enter_field x (env, acc)) ti' ti in
-        acc, T.Expr.BVal (Public, x, c (EVar x'))
+        let acc, f = typ (Env.enter_field x (env, acc)) ti' ti in
+        acc, T.Expr.BVal (Public, x, f (EVar x'))
       in
       let acc, bs = List.fold_left_map aux acc xs in
       let xs = List.map (fun (x, t) -> x, Env.subst (env, acc) t) xs in
@@ -388,8 +388,8 @@ module Subtype = struct
     | TSingleton _, _ -> Error.not_assignable env t' t
     | TWrapped _, _ -> Error.not_assignable env t' t
 
-  and equal env c' c =
-    match c', c with
+  and equal env tc' tc =
+    match tc', tc with
     | CType t', CType t ->
       (try
          let _ = typ (env, T.Type.Cons.empty) t' t
@@ -398,12 +398,12 @@ module Subtype = struct
        with
        | Diagnostic.Error.Error _ -> false)
     | CType _, _ -> false
-    | CLam (a', c'), CLam (a, c) ->
-      let c' = T.Rename.cons ~rename:(T.Rename.one a' a) c' in
-      equal (Env.add_tvar a env) c' c
+    | CLam (a', tc'), CLam (a, tc) ->
+      let tc' = T.Rename.cons ~rename:(T.Rename.one a' a) tc' in
+      equal (Env.add_tvar a env) tc' tc
     | CLam _, _ -> false
     | CRecord ts', CRecord ts ->
-      let eq (x', c') (x, c) = T.Var.equal x' x && equal env c' c in
+      let eq (x', tc') (x, tc) = T.Var.equal x' x && equal env tc' tc in
       List.equal eq ts' ts
     | CRecord _, _ -> false
   ;;
@@ -487,8 +487,8 @@ module Check = struct
       let xs, t_ = proj env xs t in
       let env_ = List.fold_left (fun e x -> Env.enter_field x e) env xs in
       let k_', t_' = typ env_ t_' in
-      let c, _ = Subtype.typ (Subtype.Env.of_env env_) t_' t_ in
-      set_kind xs k_' k, T.Subst.typ (T.Path.var (Env.path env)) (T.Subst.one_opt c) t
+      let tc, _ = Subtype.typ (Subtype.Env.of_env env_) t_' t_ in
+      set_kind xs k_' k, T.Subst.typ (T.Path.var (Env.path env)) (T.Subst.one_opt tc) t
     | S.TStruct xs ->
       let _, xs = List.fold_left_map decl env xs in
       let ks = List.concat_map (fun (ks, _) -> ks) xs

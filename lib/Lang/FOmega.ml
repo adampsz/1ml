@@ -546,7 +546,7 @@ module Eval = struct
     @@ fun _ ->
     match e with
     | EVar x -> Env.find_var x env
-    | EConst p -> VConst p
+    | EConst c -> VConst c
     | ELam (x, _, e) -> VLam (fun v -> eval (Env.add_var x v env) e)
     | EApp (e1, e2) ->
       (match eval env e1, eval env e2 with

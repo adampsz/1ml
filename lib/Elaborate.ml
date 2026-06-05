@@ -106,7 +106,7 @@ module Mapping = struct
 
   let to_list m =
     let rec aux acc = function
-      | MRecord xs -> List.fold_left (fun acc (_, c) -> aux acc c) acc xs
+      | MRecord xs -> List.fold_left (fun acc (_, m) -> aux acc m) acc xs
       | MType t -> t :: acc
     in
     List.rev (aux [] m)
@@ -233,7 +233,7 @@ module Type = struct
     let rec aux acc m = function
       | S.Path.Rev.RPNil ->
         (match m with
-         | Mapping.MType (Ex x : Ex.tvar) -> acc (Ex (T.Type.TVar x) : Ex.typ)
+         | Mapping.MType (Ex a : Ex.tvar) -> acc (Ex (T.Type.TVar a) : Ex.typ)
          | _ -> assert false)
       | S.Path.Rev.RPProj (r, x) ->
         let m =
@@ -245,24 +245,24 @@ module Type = struct
           | _ -> assert false
         in
         aux acc m r
-      | S.Path.Rev.RPApp (r1, c2) ->
-        let t2 = cons env c2 in
+      | S.Path.Rev.RPApp (r1, tc) ->
+        let t2 = cons env tc in
         aux (fun t1 -> List.fold_left Sugar.Type.app (acc t1) t2) m r1
     in
     let a, r = S.Path.rev p in
     aux Fun.id (Env.find_tvar a env) r
 
-  and cons env c =
+  and cons env tc =
     let rec aux env = function
       | S.Type.CType t -> [ (Ex (typ env t) : Ex.typ) ]
-      | S.Type.CLam (a1, c2) ->
+      | S.Type.CLam (a1, tc) ->
         let lam (Ex a : Ex.tvar) (Ex c : Ex.typ) : Ex.typ = Ex (T.Type.TLam (a, c)) in
         let env, args = Env.add_tvar a1 env in
-        let c2 = aux env c2 in
+        let c2 = aux env tc in
         List.map (fun c -> List.fold_right lam args c) c2
       | S.Type.CRecord xs -> List.concat_map (fun (_, k) -> aux env k) xs
     in
-    aux env c
+    aux env tc
   ;;
 end
 
