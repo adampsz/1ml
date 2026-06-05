@@ -1,6 +1,5 @@
 open OneMl
 module S = Lang.Surface
-module T = Lang.Typed
 
 type cmd =
   | CEval of S.file
@@ -77,8 +76,8 @@ let error_at_eof source diag =
   | Some (p, _) -> p.Lexing.pos_cnum >= Buffer.length source
 ;;
 
-let read_code ?filename line =
-  let filename = Option.value ~default:(Sources.filename ()) filename in
+let read_code line =
+  let filename = Sources.filename () in
   let rec loop buf =
     let source = Buffer.contents buf in
     Sources.register filename source;

@@ -322,7 +322,7 @@ module Elab = struct
       Env.module_tvars env, e
     | S.Expr.EType t -> [], Sugar.Expr.singleton (Type.typ env t)
     | S.Expr.EExtern (s, t) -> [], T.Expr.EExtern (s, Type.typ env t)
-    | S.Expr.EWrap (x, _) -> [], Sugar.Expr.wrap (expr env x |> snd)
+    | S.Expr.EWrap (e, _) -> [], Sugar.Expr.wrap (expr env e |> snd)
     | S.Expr.EUnwrap e -> [], Sugar.Expr.unwrap (snd (expr env e))
     | S.Expr.ESeal (e, tc, s) ->
       let x = T.Var.fresh () in

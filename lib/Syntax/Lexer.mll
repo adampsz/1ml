@@ -85,15 +85,15 @@ let ident_continue = ident_start | ['0'-'9'] | '\''
 let ident = ident_start ident_continue*
 
 let operator_start = ['$' '&' '*' '+' '-' '/' '=' '>' '@' '^' '|' '%' '<']
-let operator_condinue = operator_start | ['~' '!' '?' ':' '.']
-let operator = operator_start operator_condinue*
+let operator_continue = operator_start | ['~' '!' '?' ':' '.']
+let operator = operator_start operator_continue*
 
 let digit = ['0'-'9']
 let hex_digit = ['0'-'9' 'a'-'f' 'A'-'F']
 let oct_digit = ['0'-'7']
 let bin_digit = ['0'-'1']
 
-let char_escape = ['\\' '\"' '\'' '0' 'n' 't' 'b' 'r' ' ']
+let char_escape = ['\\' '\"' '\'' '0' 'n' 't' 'b' 'r']
 let hex_escape = 'x' hex_digit hex_digit
 let escape = '\\' (char_escape | hex_escape)
 
@@ -104,7 +104,7 @@ rule token = parse
 
   | "(*"    { comment lexbuf; token lexbuf }
 
-  (* Hack: allow [L_PAREN; P_OP_MUL("*"); R_PAREN] token sequence, and do not treat it as a comment start *)
+  (* Hack: allow [P_PAREN_L; P_OP_MUL("*"); P_PAREN_R] token sequence, and do not treat it as a comment start *)
   | "(*" (blank | newline)* ")" { lexbuf.lex_curr_pos <- lexbuf.lex_start_pos + 1; P_PAREN_L }
 
   | "{"  { P_BRACE_L }

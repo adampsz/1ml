@@ -87,8 +87,9 @@ module Sugar = struct
   let as_typ = function
     | T t -> t
     | E e -> TExpr e @@ Node.span e
+  ;;
 
-  and as_expr = function
+  let as_expr = function
     | T t -> EType t @@ Node.span t
     | E e -> e
   ;;

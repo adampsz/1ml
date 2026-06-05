@@ -91,7 +91,7 @@ let pp ?(read = Fun.const None) ppf diag =
     assert (p1.pos_fname = p2.pos_fname);
     let col p = p.pos_cnum - p.pos_bol in
     match p1.pos_fname, p1.pos_lnum, p2.pos_lnum, col p1, col p2 with
-    | f, l1, l2, _, _ when l1 != l2 -> fprintf ppf "File \"%s\", lines %d-%d:\n" f l1 l2
+    | f, l1, l2, _, _ when l1 <> l2 -> fprintf ppf "File \"%s\", lines %d-%d:\n" f l1 l2
     | f, l, _, c1, c2 when c1 + 1 < c2 ->
       fprintf ppf "File \"%s\", line %d, characters %d-%d:\n" f l (c1 + 1) c2
     | f, l, _, _, c2 -> fprintf ppf "File \"%s\", line %d, character %d:\n" f l c2

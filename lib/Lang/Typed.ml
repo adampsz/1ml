@@ -465,7 +465,6 @@ module Type = struct
       Kind.equal (kind c) (TVar.kind a) && aux c
     ;;
 
-    let equal = ( = )
     let pp = pp_cons
 
     let lookup f p c =
@@ -528,7 +527,7 @@ module Type = struct
   let is_small t =
     let rec typ env t =
       match view t with
-      | TInfer _ -> true (* Because only small types can be infered *)
+      | TInfer _ -> true (* Because only small types can be inferred *)
       | TAbstr p -> path env p
       | TPrim _ -> true
       | TArrow (_, t1, Explicit Impure, t2) ->
@@ -746,7 +745,7 @@ module Equal = struct
 
   and cons ?unify c' c =
     match c', c with
-    | CType t', CType t -> typ ?unify t t'
+    | CType t', CType t -> typ ?unify t' t
     | CType _, _ -> false
     | CLam (a', c'), CLam (a, c) ->
       cons ?unify (Rename.cons ~rename:(Rename.one a' a) c') c

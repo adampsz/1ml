@@ -7,6 +7,16 @@ open struct
 
   let view = T.Type.view
   let wrap = T.Type.wrap
+
+  (* Combine the per-bind results of checking a struct's bindings into the
+     struct's kinds, effect, field types, and elaborated bindings. *)
+  let combine_binds xs =
+    let ks = List.concat_map (fun (ks, _, _, _) -> ks) xs
+    and eff = List.fold_left (fun a (_, eff, _, _) -> T.Effect.join a eff) Pure xs
+    and ts = List.concat_map (fun (_, _, ts, _) -> ts) xs |> T.Var.normalize
+    and es = List.map (fun (_, _, _, b) -> b) xs in
+    ks, eff, ts, es
+  ;;
 end
 
 module Env : sig
@@ -243,7 +253,7 @@ module Subtype = struct
     type variable bound by the [path].
 
     The type [t] is a concrete type except an abstract type variable bound in [path].
-    When subtyping succedes, it returns a substitution [s] that can be applied
+    When subtyping succeeds, it returns a substitution [s] that can be applied
     to the type variable in [path] to make it a concrete supertype of [t'].
   *)
   let rec typ (env, acc) t' t =
@@ -561,11 +571,8 @@ module Check = struct
       k, eff, t, e (T.Expr.ECond (x, f1 e1, f2 e2, tmod))
     | S.EStruct xs ->
       let _, xs = List.fold_left_map bind env xs in
-      let ks = List.concat_map (fun (ks, _, _, _) -> ks) xs
-      and eff = List.fold_left (fun a (_, eff, _, _) -> T.Effect.join a eff) Pure xs
-      and ts = List.concat_map (fun (_, _, ts, _) -> ts) xs |> T.Var.normalize
-      and xs = List.map (fun (_, _, _, b) -> b) xs in
-      T.Kind.opt_record ks, eff, TRecord ts |> wrap ?span, T.Expr.EStruct (xs, ts)
+      let ks, eff, ts, es = combine_binds xs in
+      T.Kind.opt_record ks, eff, TRecord ts |> wrap ?span, T.Expr.EStruct (es, ts)
     | S.EProj (e, x) ->
       let k, eff, t, te = expr env e in
       let ts =
@@ -753,10 +760,7 @@ module Session = struct
 
   let next state file =
     let env, xs = List.fold_left_map Check.bind state.env file in
-    let ks = List.concat_map (fun (ks, _, _, _) -> ks) xs
-    and eff = List.fold_left (fun a (_, eff, _, _) -> T.Effect.join a eff) Pure xs
-    and ts = List.concat_map (fun (_, _, ts, _) -> ts) xs |> T.Var.normalize
-    and es = List.map (fun (_, _, _, b) -> b) xs in
+    let ks, eff, ts, es = combine_binds xs in
     let state =
       { env
       ; ks = state.ks @ ks

@@ -128,7 +128,7 @@ module Extern = struct
     | "Float.>." -> binary (fun x1 x2 -> of_bool (to_float x1 > to_float x2))
     | "Float.<=." -> binary (fun x1 x2 -> of_bool (to_float x1 <= to_float x2))
     | "Float.>=." -> binary (fun x1 x2 -> of_bool (to_float x1 >= to_float x2))
-    | "Float.print" -> unary (fun x -> of_unit (Format.printf "%d%!" (to_int x)))
+    | "Float.print" -> unary (fun x -> of_unit (Format.printf "%F%!" (to_float x)))
     | "Char.toInt" -> unary (fun x -> of_int (Char.code (to_char x)))
     | "Char.fromInt" -> unary (fun x -> of_char (Char.chr (to_int x)))
     | "Char.print" -> unary (fun x -> of_unit (Format.printf "%c%!" (to_char x)))
