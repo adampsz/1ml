@@ -272,3 +272,11 @@
   > EOF
   Error: type `_' is not assignable to `C'.M.t'
   [1]
+
+  $ 1ml - <<- 'EOF'
+  >   typeof 'a (_: a) = a;
+  >   F (X: { type t }) :> { type u } = { type u = X.t };
+  >   y = typeof F;
+  > EOF
+  Error: type `_' is not assignable to `(X: { t: type }) -> { u: (= type <abstr>) }'
+  [1]

@@ -78,7 +78,23 @@ module Abstr = struct
         DApp (out, T.Subst.typ a (T.Subst.one tc) t1), t
     in
     let out, t = generalize t out in
-    if T.Equal.typ ~unify:true t (TAbstr p |> T.Type.wrap) then Some out else None
+    (* Reject types like `'a => (= type a)`, because they cause infinite loop *)
+    let rec mentions t1 =
+      match T.Type.view t1 with
+      | _ when T.Equal.typ t1 (TAbstr p |> T.Type.wrap) -> true
+      | TArrow (_, t1, _, t2) -> mentions t1 || mentions t2
+      | TRecord ts -> List.exists (fun (_, t) -> mentions t) ts
+      | TSingleton t | TWrapped t | TMod (_, t) -> mentions t
+      | TInfer _ | TAbstr _ | TPrim _ -> false
+    in
+    let rec circular = function
+      | DNil -> false
+      | DProj (out, _) -> circular out
+      | DApp (out, t1) -> circular out || mentions t1
+    in
+    if T.Equal.typ ~unify:true t (TAbstr p |> T.Type.wrap) && not (circular out)
+    then Some out
+    else None
   ;;
 end
 
