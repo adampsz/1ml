@@ -817,6 +817,24 @@ module Invariant = struct
   let fail () = raise Violation
   let invariant cond = if not cond then fail ()
 
+  let kind_paths root kind =
+    let rec aux acc path = function
+      | Kind.KType -> path :: acc
+      | Kind.KRecord xs ->
+        List.fold_left (fun acc (x, k) -> aux acc (Path.PProj (path, x)) k) acc xs
+      | Kind.KArrow (_, k2) -> aux acc (Path.PApp (path, ())) k2
+    in
+    aux [] (Path.PVar root) kind
+  ;;
+
+  let unique_paths root kind =
+    let rec aux = function
+      | [] -> false
+      | p :: ps -> List.exists (fun q -> Path.compare p q = Some 0) ps || aux ps
+    in
+    invariant (not (aux (kind_paths root kind)))
+  ;;
+
   module Env = struct
     include Env
 
@@ -852,6 +870,7 @@ module Invariant = struct
     | TWrapped t -> typ env t
     | TMod (a, t) ->
       invariant (not (TVar.is_empty a));
+      unique_paths a (TVar.kind a);
       typ (Env.enter_mod a env) t
 
   and path env = function
@@ -863,7 +882,9 @@ module Invariant = struct
 
   and cons env = function
     | Type.CType t -> typ env t
-    | Type.CLam (a, tc) -> cons (Env.add_tvar a env) tc
+    | Type.CLam (a, tc) ->
+      unique_paths a (TVar.kind a);
+      cons (Env.add_tvar a env) tc
     | Type.CRecord xs -> List.iter (fun (_, tc) -> cons env tc) xs
   ;;
 
