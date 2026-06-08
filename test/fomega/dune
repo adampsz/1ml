@@ -1,6 +1,6 @@
 (executable
  (name FOmega)
- (libraries OneMl))
+ (libraries Lang))
 
 (ocamllex Lexer)
 
@@ -8,4 +8,4 @@
  (modules Parser))
 
 (cram
- (deps ./FOmega.exe ./FOmega.fo))
+ (deps ./FOmega.exe ./FOmega.txt))

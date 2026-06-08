@@ -12,7 +12,7 @@
 
 %token KW_AS       "as"
 %token KW_EXISTS   "exists"
-%token KW_EXTERNAL "external"
+%token KW_EXTERN   "extern"
 %token KW_FORALL   "forall"
 %token KW_IN       "in"
 %token KW_LAMBDA   "lambda"
@@ -38,15 +38,14 @@
 
 %token EOF
 
-%start<OneMl.FOmega.Expr.t list> program
-%start<OneMl.FOmega.Expr.t> repl
+%start<Lang.FOmega.Expr.t list> program
+%start<Lang.FOmega.Expr.t> repl
 
 %{
-  open OneMl
-  open OneMl.FOmega
-  open OneMl.FOmega.Kind
-  open OneMl.FOmega.Type
-  open OneMl.FOmega.Expr
+  open Lang.FOmega
+  open Lang.FOmega.Kind
+  open Lang.FOmega.Type
+  open Lang.FOmega.Expr
 
   type exkind = KEx:  'k Kind.t -> exkind
   type extvar = TVEx: 'k TVar.t -> extvar
@@ -118,11 +117,6 @@
     aux env xs
   ;;
 
-  let desugar_let_binding x t e1 e2 env =
-    let x, env' = add_var x env in
-    EApp (ELam (x, ttyp (t env), e2 env'), e1 env)
-  ;;
-
   let desugar_expr_pack t e s env =
     match t env, ttyp (s env) with
     | TEx t, TExists (a, s) -> (match Kind.hequal (Type.kind t) (TVar.kind a) with
@@ -188,10 +182,10 @@ typ_atom:
   | "(" t=typ ")" { t }
 
   | id=IDENT { find_typ id }
-  | "unit"   { Fun.const (TEx (TPrim PrimUnit)) }
-  | "bool"   { Fun.const (TEx (TPrim PrimBool)) }
-  | "int"    { Fun.const (TEx (TPrim PrimInt)) }
-  | "string" { Fun.const (TEx (TPrim PrimString)) }
+  | "unit"   { Fun.const (TEx (TPrim PUnit)) }
+  | "bool"   { Fun.const (TEx (TPrim PBool)) }
+  | "int"    { Fun.const (TEx (TPrim PInt)) }
+  | "string" { Fun.const (TEx (TPrim PString)) }
 
   | "{" ts=typ_record_field_list "}" { fun env -> TEx (TRecord (ts env)) }
 ;
@@ -214,7 +208,10 @@ expr:
       EUnpack (a, x, e1 env, e2 env')
     }
 
-  | "let" x=IDENT t=typ_annot "=" e1=expr "in" e2=expr { desugar_let_binding x t e1 e2 }
+  | "let" x=IDENT "=" e1=expr "in" e2=expr { fun env ->
+    let x, env = add_var x env in
+    ELetIn (x, e1 env, e2 env)
+  }
 ;
 
 %inline
@@ -237,15 +234,15 @@ expr_atom:
   | "(" e=expr ")" { e }
 
   | id=IDENT { find_var id }
-  | "(" ")"  { Fun.const (EConst (ConstUnit ())) }
-  | "true"   { Fun.const (EConst (ConstBool true)) }
-  | "false"  { Fun.const (EConst (ConstBool false)) }
-  | x=INT    { Fun.const (EConst (ConstInt x)) }
-  | s=STRING { Fun.const (EConst (ConstString s)) }
+  | "(" ")"  { Fun.const (EConst (CUnit ())) }
+  | "true"   { Fun.const (EConst (CBool true)) }
+  | "false"  { Fun.const (EConst (CBool false)) }
+  | x=INT    { Fun.const (EConst (CInt x)) }
+  | s=STRING { Fun.const (EConst (CString s)) }
 
-  | x=expr_atom "." l=label               { fun env -> EProj (x env, l) }
-  | "(" "external" id=IDENT ":" t=typ ")" { fun env -> EExternal (id, ttyp (t env)) }
-  | "{" es=expr_record_field_list "}"     { fun env -> ERecord (es env) }
+  | x=expr_atom "." l=label             { fun env -> EProj (x env, l) }
+  | "(" "extern" id=IDENT ":" t=typ ")" { fun env -> EExtern (id, ttyp (t env)) }
+  | "{" es=expr_record_field_list "}"   { fun env -> ERecord (es env) }
 ;
 
 %inline expr_record_field_list:

@@ -1,0 +1,24 @@
+(* subtyping *)
+f (x: unit): _ = x;
+f (x: _): unit = x;
+f (x: { a: unit }): _ = x;
+f (x: _): { a: unit } = x;
+f (x: unit -> unit): _ = x;
+f (x: _): unit -> unit = x;
+f (x: wrap unit): _ = x;
+f (x: _): wrap unit = x;
+
+(* projection *)
+f x = x.field;
+
+(* singleton *)
+f a (x: a) = (x: int);
+
+(* application *)
+f x = x ();
+
+(* cond *)
+f x = if x then () else ();
+
+(* wrap/unwrap *)
+f x = unwrap x: wrap unit;

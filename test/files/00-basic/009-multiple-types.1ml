@@ -1,0 +1,19 @@
+type X = {
+  type t;
+  type t1 (a : type);
+  type t2 (a : type) (b: type => type);
+  type t3 (a : type) (b: type => type) (c: (type => type) => type => type);
+};
+
+x = {
+  type t = int;
+  type t1 (a : type) = a;
+  type t2 (a : type) (b: type => type) = b a;
+  type t3 (a : type) (b: type => type) (c: (type => type) => type => type) = c b a;
+};
+
+x1 = x :> X;
+x2 = x : X;
+
+include x1;
+include x2;

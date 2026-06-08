@@ -1,0 +1,92 @@
+Unit = {
+  type t = extern "unit";
+};
+
+Bool = {
+  type t = extern "bool";
+  true = extern "Bool.true": t;
+  false = extern "Bool.false": t;
+};
+
+Int = {
+  type t = extern "int";
+  ( + ) = extern "Int.+": t -> t -> t;
+  ( - ) = extern "Int.-": t -> t -> t;
+  ( * ) = extern "Int.*": t -> t -> t;
+  ( / ) = extern "Int./": t -> t -> t;
+  ( % ) = extern "Int.%": t -> t -> t;
+  ( ** ) = extern "Int.**": t -> t -> t;
+  ( < ) = extern "Int.<": t -> t -> Bool.t;
+  ( > ) = extern "Int.>": t -> t -> Bool.t;
+  ( <= ) = extern "Int.<=": t -> t -> Bool.t;
+  ( >= ) = extern "Int.>=": t -> t -> Bool.t;
+};
+
+Float = {
+  type t = extern "float";
+  ( +. ) = extern "Float.+.": t -> t -> t;
+  ( -. ) = extern "Float.-.": t -> t -> t;
+  ( *. ) = extern "Float.*.": t -> t -> t;
+  ( /. ) = extern "Float./.": t -> t -> t;
+  ( %. ) = extern "Float.%.": t -> t -> t;
+  ( **. ) = extern "Float.**.": t -> t -> t;
+  ( <. ) = extern "Float.<.": t -> t -> Bool.t;
+  ( >. ) = extern "Float.>.": t -> t -> Bool.t;
+  ( <=. ) = extern "Float.<=.": t -> t -> Bool.t;
+  ( >=. ) = extern "Float.>=.": t -> t -> Bool.t;
+};
+
+Char = {
+  type t = extern "char";
+};
+
+String = {
+  type t = extern "string";
+  ( ++ ) = extern "String.++": t -> t -> t;
+};
+
+Assert = {
+  ok = extern "Assert.ok" : Bool.t -> Unit.t;
+  eq 'a (x: a) (y: a) = (extern "Assert.eq": a -> a -> Unit.t) x y;
+};
+
+Pervasives = {
+  unit = Unit.t;
+
+  bool = Bool.t;
+  true = Bool.true;
+  false = Bool.false;
+
+  int = Int.t;
+  ( + ) = Int.( + );
+  ( - ) = Int.( - );
+  ( * ) = Int.( * );
+  ( / ) = Int.( / );
+  ( % ) = Int.( % );
+  ( ** ) = Int.( ** );
+  ( < ) = Int.( < );
+  ( > ) = Int.( > );
+  ( <= ) = Int.( <= );
+  ( >= ) = Int.( >= );
+
+  float = Float.t;
+  ( +. ) = Float.( +. );
+  ( -. ) = Float.( -. );
+  ( *. ) = Float.( *. );
+  ( /. ) = Float.( /. );
+  ( %. ) = Float.( %. );
+  ( **. ) = Float.( **. );
+  ( <. ) = Float.( <. );
+  ( >. ) = Float.( >. );
+  ( <=. ) = Float.( <=. );
+  ( >=. ) = Float.( >=. );
+
+  char = Char.t;
+
+  string = String.t;
+  ( ++ ) = String.( ++ );
+
+  ( == ) 'a (x: a) (y: a) = (extern "==": a -> a -> bool) x y;
+};
+
+include Pervasives;

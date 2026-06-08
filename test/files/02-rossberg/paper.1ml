@@ -1,76 +1,8 @@
-(**
- * Snippets from Andreas Rossberg's 1ML paper, translated to our syntax
- * See https://github.com/rossberg/1ml/blob/028859a/paper.1ml for other version of this file.
- *)
-
-(* Minimal std, later to be included elsewhere *)
-Std = {
-    Primitives = {
-        type unit = external "unit";
-        type int = external "int";
-        type bool = external "bool";
-        type float = external "float";
-        type string = external "string";
-    };
-
-    open Primitives;
-
-    Operators = {
-        external ( + ) : int -> int -> int = "iadd";
-        external ( - ) : int -> int -> int = "isub";
-        external ( * ) : int -> int -> int = "imul";
-        external ( / ) : int -> int -> int = "idiv";
-        external ( % ) : int -> int -> int = "imod";
-        external ( ** ) : int -> int -> int = "ipow";
-        external ( > ) : int -> int -> bool = "igt";
-        external ( < ) : int -> int -> bool = "ilt";
-        external ( >= ) : int -> int -> bool = "ige";
-        external ( <= ) : int -> int -> bool = "ile";
-    };
-
-    open Operators;
-
-    Option = {
-        type opt a = unit;
-        none a = ();
-        some a (x: a) = ();
-    } :> {
-        type opt a;
-        none a: opt a;
-        some a (x: a): opt a;
-    };
-
-    List = {
-        type list a = unit;
-        nil a = ();
-        cons a (x: a) (xs: list a) = ();
-
-        foldl a b (xs: list a) (init: b) (f: b -> a -> b) = init;
-        map a b (xs: list a) (f: a -> b) = ();
-    } :> {
-        type list a;
-        nil a: list a;
-        cons a: a -> list a -> list a;
-
-        foldl a b: list a -> b -> (b -> a -> b) -> b;
-        map a b: list a -> (a -> b) -> list b;
-    };
-
-    Prelude = {
-        include Primitives;
-        include Operators;
-        include Option;
-
-        include {
-            list = List.list;
-            nil = List.nil;
-            cons = List.cons;
-        };
-    };
-};
-
-open Std;
-open Std.Prelude;
+(* Examples from the 1ML paper
+ * (assumes prelude.1ml)
+ *
+ * Note: This is assuming full 1ML, so unlike in the first part of the paper,
+ * explicit type parameters must be annotated as 'type'. *)
 
 (* Section 2: 1ML with Explicit Types *)
 
@@ -78,7 +10,7 @@ open Std.Prelude;
 
 application  = (fun (n : int) => n + n) 3;
 expanded     = let f = fun (n : int) => n + n and x = 3 in f x;
-moreexpanded = { f = fun (n : int) => n + n; x = 3; body = f x }.body;
+moreexpanded = {f = fun (n : int) => n + n; x = 3; body = f x}.body;
 
 (* Reified Types *)
 
@@ -143,26 +75,26 @@ Map (Key : EQ) :> MAP with type key = Key.t =
 {
   type key = Key.t;
   type map a = key -> opt a;
-  empty (a : type) = fun (k : key) => none a;
+  empty (a : type) = fun (k : key) => none;
   lookup (a : type) (k : key) (m : map a) = m k;
   add (a : type) (k : key) (v : a) (m : map a) =
-    fun (x : key) => if Key.eq x k then some a v else m x : opt a
+    fun (x : key) => if Key.eq x k then some v else m x : opt a
 };
 
 (* Applicative vs. Generative *)
 
-F = (fun (a : type) => type {x : a}) :> (type => type);
-G = (fun (a : type) => type {x : a}) :> (type -> type);
+F = (fun (a : type) => type {x : a}) :> type => type;
+G = (fun (a : type) => type {x : a}) :> type -> type;
 H = fun (a : type) => (type {x : a} :> type);
-(* J = G :> type => type; (* ill-typed! *) *)
+(* J = G :> type => type; *) (* ill-typed! *)
 
 (* Higher Polymorphism *)
 
-f (id : (a : type) => a -> a) = { x = id int 5; y = id bool true };
+f (id : (a : type) => a -> a) = {x = id int 5; y = id bool true};
 
 type SHAPE = {type t; area : t -> int; v : t};
 volume (height : int) (s : SHAPE) = height * s.area (s.v);
-area (ss: List.list (wrap SHAPE)) = List.foldl (type (wrap SHAPE)) int ss 0 (fun (a : int) (s : wrap SHAPE) => let s: SHAPE = unwrap s: (wrap SHAPE) in a + s.area s.v);
+area ss = List.foldl ss 0 (fun a (wrap s : wrap SHAPE) => a + s.area (s.v));
 
 type COLL c =
 {
@@ -173,27 +105,25 @@ type COLL c =
   lookup : c -> key -> opt val;
   keys : c -> list key
 };
-
-(*entries (c : type) (C : COLL c) (xs : c) : list (type (C.key, C.val)) =
-  List.map (C.keys xs) (fun (k : C.key) => (k, caseopt (C.lookup xs k) bot id));*)
+entries (c : type) (C : COLL c) (xs : c) : list (C.key, C.val) =
+  List.map (C.keys xs) (fun (k : C.key) => (k, caseopt (C.lookup xs k) bot id));
 
 type MONAD (m : type => type) =
 {
-  return a : a -> m a;
-  bind a b : m a -> (a -> m b) -> m b
+  return (a : type) : a -> m a;
+  bind (a : type) (b : type) : m a -> (a -> m b) -> m b
 };
-
-map a b (m : type => type) (M : MONAD m) (f : a -> b) (mx : m a) =
-  M.bind a b mx (fun (x : a) => M.return b (f x));
+map (a : type) (b : type) (m : type => type) (M : MONAD m) (f : a -> b) (mx : m a) =
+  M.bind a b mx (fun (x : a) => M.return b (f x));  (* : m b *)
 
 (* ...the same with implicit types: *)
-(*type MONAD (m : type => type) =
+type MONAD (m : type => type) =
 {
   return 'a : a -> m a;
   bind 'a 'b : m a -> (a -> m b) -> m b
 };
 map (m : type => type) (M : MONAD m) f mx =
-  M.bind mx (fun x => M.return (f x));*)
+  M.bind mx (fun x => M.return (f x));
 
 (* Computed Modules *)
 
@@ -202,13 +132,13 @@ pickTable (size : int) (threshold : int) (HashMap : MAP) (TreeMap : MAP) =
   Table = if size > threshold then HashMap else TreeMap : MAP
 };
 
+(*;
 type MONAD =
 {
   type t a;
   return (a : type) : a -> t a;
   bind (a : type) (b : type) : t a -> (a -> t b) -> t b
 };
-
 type MONAD_TRANS =
 {
   include MONAD;
@@ -223,7 +153,7 @@ mapM (M : MONAD) (a : type) (b : type) (f : a -> b) (m : M.t a) : M.t b =
 joinM (M : MONAD) (a : type) (mm : M.t (M.t a)) : M.t a =
   M.bind (M.t a) a mm (fun (m : M.t a) => m);
 
-(*StackM (M : MONAD) =
+StackM (M : MONAD) =
   rec (Loop : (n : int) -> (MONAD_TRANS with (base = M.t))) =>
   fun (n : int) =>
   if n == 1 then
@@ -278,14 +208,14 @@ C = if true then Ti else int : type;
 
 (* Subtyping *)
 
-type MONSTER =
-  (= (fun (x : {}) => ({type t = int; v = 0} :> {type t; v : t}).v));
+(* type MONSTER =
+  (= (fun (x : {}) => ({type t = int; v = 0} :> {type t; v : t}).v)); *) (* This implementation does not support function singletons *)
 (* Test (X : MONSTER) = X : MONSTER; *) (* error *)
 
 
 (* Section 4: Full 1ML *)
 
-(* SubtypingImplicitsWithTypeMatching =
+SubtypingImplicitsWithTypeMatching =
   fun (X : '(a : type) => {type t = a; f : a -> t}) =>
        X : {type t; f : int -> int};
 
@@ -297,7 +227,7 @@ type MAP =
   lookup 'a : key -> map a -> opt a;
   add 'a : key -> a -> map a -> map a
 };
-Map (Key : EQ) :> MAP with (type key = Key.t) =
+Map (Key : EQ) :> MAP with type key = Key.t =
 {
   type key = Key.t;
   type map a = key -> opt a;
@@ -310,35 +240,35 @@ FirstClassImplicit =
   (fun (id : 'a  => a -> a) => {x = id 3; y = id true}) (fun x => x);
 
 
-;; Section 5: Inference
-;; 5.2 Incompleteness
+(* Section 5: Inference *)
+(* 5.2 Incompleteness *)
 
-;; Type Scoping
+(* Type Scoping *)
 
 id : 'a => a -> a = fun x => x;
 G (x : int) = {M = {type t = int; v = x} :> {type t; v : t}; f = id id};
 C = G 3;
-;; x = C.f (C.M.v);  ;; error
+(* x = C.f (C.M.v); *) (* error *)
 
-;; ...works with pure 'id' function:
+(* ...works with pure 'id' function: *)
 id = fun x => x;
 G (x : int) = {M = {type t = int; v = x} :> {type t; v : t}; f = id id};
 C = G 3;
 x = C.f (C.M.v);
 
-;; ...or with type annotation:
+(* ...or with type annotation: *)
 id : 'a => a -> a = fun x => x;
 G (x : int) = {M = {type t = int; v = x} :> {type t; v : t}; f : M.t -> M.t = id id};
 C = G 3;
 x = C.f (C.M.v);
 
-;; ...or when applying G twice.
+(* ...or when applying G twice. *)
 id : 'a => a -> a = fun x => x;
 G (x : int) = {M = {type t = int; v = x} :> {type t; v : t}; f = id id};
 C = G 3;
 C' = G 3;
 x = C'.f (C.M.v);
-;; x = C.f (C'.M.v);  ;; but this is an error*)
+(* x = C.f (C'.M.v); *) (* but this is an error *)
 
 
 (* Appendix C: Impredicativity *)
@@ -346,15 +276,14 @@ x = C'.f (C.M.v);
 type OPT =
 {
   type opt a;
-  none a : opt a;
-  some a : a -> opt a;
-  caseopt a b : opt a -> b -> (a -> b) -> b;
+  none 'a : opt a;
+  some 'a : a -> opt a;
+  caseopt 'a 'b : opt a -> b -> (a -> b) -> b;
 };
-
 Opt :> OPT =
 {
-  type opt a = wrap (b : type) => b -> (a -> b) -> b;
-  none a = wrap (fun (b : type) (n : b) (s : a -> b) => n) : opt a;
-  some a (x: a) = wrap (fun (b : type) (n : b) (s : a -> b) => s x) : opt a;
-  caseopt a b (xo : opt a) = (unwrap xo : opt a) b;
+  type opt a = wrap ((b : type) => b -> (a -> b) -> b);
+  none 'a = wrap (fun (b : type) (n : b) (s : a -> b) => n) : opt a;
+  some 'a x = wrap (fun (b : type) (n : b) (s : a -> b) => s x) : opt a;
+  caseopt 'a 'b xo = (unwrap xo : opt a) b;
 };

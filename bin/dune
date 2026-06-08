@@ -3,3 +3,12 @@
  (name main)
  (libraries OneMl)
  (modes byte exe))
+
+(rule
+ (targets Config.ml)
+ (action
+  (with-stdout-to
+   Config.ml
+   (progn
+    (echo "let name = \"1ml\"\n")
+    (echo "let version = \"%{version:1ml}\"\n")))))

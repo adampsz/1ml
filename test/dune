@@ -1,0 +1,5 @@
+(cram
+ (deps
+  %{bin:1ml}
+  ./deps/pp.exe
+  (source_tree files)))

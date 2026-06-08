@@ -1,0 +1,44 @@
+node name l r = { name; l; r };
+
+( + )  = node "+";
+( - )  = node "-";
+( * )  = node "*";
+( / )  = node "/";
+( % )  = node "%";
+( ** ) = node "**";
+( < )  = node "<";
+( > )  = node ">";
+( <= ) = node "<=";
+( >= ) = node ">=";
+
+(* operator associativity *)
+
+do Assert.eq (1 + 2 + 3) (node "+" (node "+" 1 2) 3);
+do Assert.eq (1 - 2 - 3) (node "-" (node "-" 1 2) 3);
+do Assert.eq (1 * 2 * 3) (node "*" (node "*" 1 2) 3);
+do Assert.eq (1 / 2 / 3) (node "/" (node "/" 1 2) 3);
+do Assert.eq (1 % 2 % 3) (node "%" (node "%" 1 2) 3);
+do Assert.eq (1 ** 2 ** 3) (node "**" 1 (node "**" 2 3));
+
+(* operator precedence *)
+
+do Assert.eq (1 ** 2 % 3 / 4 * 5 - 6 + 7) (node "+" (node "-" (node "*" (node "/" (node "%" (node "**" 1 2) 3) 4) 5) 6) 7);
+do Assert.eq (1 + 2 - 3 * 4 / 5 % 6 ** 7) (node "-" (node "+" 1 2) (node "%" (node "/" (node "*" 3 4) 5) (node "**" 6 7)));
+
+(* logical expressions *)
+
+do Assert.eq (false && false) false;
+do Assert.eq (true && false) false;
+do Assert.eq (false && true) false;
+do Assert.eq (true && true) true;
+
+do Assert.eq (false || false) false;
+do Assert.eq (true || false) true;
+do Assert.eq (false || true) true;
+do Assert.eq (true || true) true;
+
+do Assert.eq (false && true || true) true;
+
+fail _ = let _ = Assert.ok false in true;
+_ = (true || fail ());
+_ = (false && fail ());

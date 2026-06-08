@@ -1,46 +1,47 @@
-open OneMl.FOmega
-open OneMl.FOmega.Value
+open Lang.FOmega
+open Lang.FOmega.Value
 
 let panic = function
-  | VPrim (ConstString s) -> failwith (Printf.sprintf "Program panicked: %s" s)
+  | VConst (CString s) -> failwith (Printf.sprintf "Program panicked: %s" s)
   | _ -> failwith "Program panicked: unknown error"
 ;;
 
 let print = function
-  | VPrim (ConstString x) -> VPrim (ConstUnit (Format.printf "%s\n%!" x))
-  | x -> VPrim (ConstUnit (Format.printf "%a\n%!" PP.pp_value x))
+  | VConst (CString x) -> VConst (CUnit (Format.printf "%s\n%!" x))
+  | x -> VConst (CUnit (Format.printf "%a\n%!" Value.pp x))
 ;;
 
 let add x y =
   match x, y with
-  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x + y))
+  | VConst (CInt x), VConst (CInt y) -> VConst (CInt (x + y))
   | _ -> assert false
 ;;
 
 let sub x y =
   match x, y with
-  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x - y))
+  | VConst (CInt x), VConst (CInt y) -> VConst (CInt (x - y))
   | _ -> assert false
 ;;
 
 let mul x y =
   match x, y with
-  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x * y))
+  | VConst (CInt x), VConst (CInt y) -> VConst (CInt (x * y))
   | _ -> assert false
 ;;
 
 let div x y =
   match x, y with
-  | VPrim (ConstInt x), VPrim (ConstInt y) -> VPrim (ConstInt (x / y))
+  | VConst (CInt x), VConst (CInt y) -> VConst (CInt (x / y))
   | _ -> assert false
 ;;
 
 let builtin =
-  let unary f = VExternal f
-  and binary f = VExternal (fun x -> VExternal (f x)) in
+  let unary f = VLam f
+  and binary f = VLam (fun x -> VLam (f x))
+  and typ f = VTyLam (fun _ -> f) in
   function
   | "panic" -> Some (unary panic)
-  | "print" -> Some (unary print)
+  | "print" -> Some (typ (unary print))
   | "add" -> Some (binary add)
   | "sub" -> Some (binary sub)
   | "mul" -> Some (binary mul)
@@ -52,11 +53,11 @@ let run parse lexbuf =
   let aux expr =
     let typ = Typecheck.infer Typecheck.Env.empty expr
     and value = Eval.eval (Eval.Env.init builtin) expr in
-    Format.printf "%a :: %a\n%!" PP.pp_value value PP.pp_typ typ
+    Format.printf "@[<2>%a ::@ %a@]@." Value.pp value Type.pp typ
   in
   try parse Lexer.token lexbuf |> List.iter aux with
-  | OneMl.Diagnostic.Error.Error diag ->
-    Format.eprintf "%a\n%!" (OneMl.Diagnostic.pp ?read:None) diag
+  | Util.Diagnostic.Error.Error diag ->
+    Format.eprintf "%a\n%!" (Util.Diagnostic.pp ?read:None) diag
 ;;
 
 let rec repl () =

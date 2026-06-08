@@ -1,0 +1,19 @@
+x = 0;
+y = 0;;
+z = 0;;;
+
+do Assert.eq x 0;
+do Assert.eq y 0;
+do Assert.eq z 0;
+
+open {
+  y = 1;
+};
+
+include {
+  z = 2;
+};
+
+do Assert.eq x 0;
+do Assert.eq y 1;
+do Assert.eq z 2;

@@ -23,3 +23,7 @@ _build/
 
 # Local OPAM switch
 _opam/
+
+# Generated coverage reports
+*.coverage
+_coverage/

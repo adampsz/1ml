@@ -1,569 +1,371 @@
-open Middle
-open Surface.Node
-module Var = Expr.Var
-module TVar = Type.TVar
-module Ident = Surface.Ident
-module S = Surface.Ast
 open Util
+open (val Trace.init ~scope:"elaborate" ())
+module S = Lang.Typed
+module T = Lang.FOmega
 
-let trace = Tracing.init ~width:7 "elaborate"
-
-module PP = struct
-  let pp_paths ppf ps =
-    let pp_sep ppf () = Format.pp_print_string ppf "; "
-    and pp_path ppf (Middle.Type.Path.Set.Ex p) = Middle.PP.pp_path ppf p in
-    Format.fprintf ppf "{ %a }" (Middle.Type.Path.Set.pp ~pp_sep pp_path) ps
-  ;;
-
-  let pp_subst sub ppf ps =
-    let rec path_var : type k. k Type.path -> Type.TVar.ex = function
-      | Type.Path.TVar a -> Type.TVar.Ex a
-      | Type.Path.TApp (p, _) -> path_var p
-    in
-    let pp_sep ppf () = Format.pp_print_string ppf "; "
-    and pp_val ppf (Middle.Type.Path.Set.Ex p) =
-      let (Type.TVar.Ex a) = path_var p in
-      match Middle.Type.Subst.find_opt a sub with
-      | Some t -> Format.fprintf ppf "%a => %a" Middle.PP.pp_path p Middle.PP.pp_typ t
-      | None -> Format.fprintf ppf "%a" Middle.PP.pp_path p
-    in
-    let pp_paths = Format.pp_print_iter ~pp_sep Middle.Type.Path.Set.iter pp_val in
-    Format.fprintf ppf "{ %a }" pp_paths ps
-  ;;
-
-  let pp_expr_fun env ppf f =
-    let x = Expr.Var.fresh ~name:"X" () in
-    let e = f env (Expr.EVar x) in
-    Format.fprintf ppf "λ X. %a" Middle.PP.pp_expr e
-  ;;
+module Ex = struct
+  type kind = Existential(T.Kind).t
+  type tvar = Existential(T.TVar).t
+  type typ = Existential(T.Type).t
 end
 
-module Error = struct
-  open Diagnostic.Error
+module Sugar = struct
+  open Ex
 
-  let expected_pure_expression ?span _e = error ?span "expected pure expression"
+  module Var = struct
+    let typ = "%typ"
+    let wrap = "%val"
 
-  let expected_type what ?span t =
-    error ?span "expected %s, but got %a" what Middle.PP.pp_qtyp t
+    let eff = function
+      | S.Type.Implicit -> "%implicit"
+      | S.Type.Explicit Pure -> "%pure"
+      | S.Type.Explicit Impure -> "%impure"
+    ;;
+  end
+
+  module Type = struct
+    let app (Ex t1 : typ) (Ex t2 : typ) : typ =
+      match T.Type.kind t1 with
+      | KArrow (k, _) ->
+        (match T.Kind.hequal (T.Type.kind t2) k with
+         | Some Equal -> Ex (T.Type.TApp (t1, t2))
+         | _ -> assert false)
+      | _ -> assert false
+    ;;
+
+    let singleton t = T.Type.TRecord [ Var.typ, T.Type.TArrow (t, T.Type.TRecord []) ]
+    let wrap t = T.Type.TRecord [ Var.wrap, t ]
+    let eff_arrow t1 eff t2 = T.Type.TArrow (t1, T.Type.TRecord [ Var.eff eff, t2 ])
+  end
+
+  module Expr = struct
+    let pack a tc s e =
+      let aux (Ex a : Ex.tvar) (Ex t : Ex.typ) rest s =
+        match T.Kind.hequal (T.TVar.kind a) (T.Type.kind t) with
+        | Some Equal ->
+          let b, e = rest (T.Type.Subst.subst_one a t s) in
+          let s = List.fold_right (fun (Ex a : Ex.tvar) s -> T.Type.TExists (a, s)) b s in
+          (Ex a : Ex.tvar) :: b, T.Expr.EPack (t, e, a, s)
+        | _ -> assert false
+      in
+      let _, e = List.fold_right2 aux a tc (Fun.const ([], e)) s in
+      e
+    ;;
+
+    let unpack a x e1 e2 =
+      let aux (Ex a : Ex.tvar) (x, e2) =
+        let tmp = T.Var.fresh () in
+        tmp, T.Expr.EUnpack (a, x, T.Expr.EVar tmp, e2)
+      in
+      match List.fold_right aux a (x, e2) with
+      | _, T.Expr.EUnpack (a', x, _, e2) when a <> [] ->
+        (* Minor optimization - drop top-level let in *)
+        T.Expr.EUnpack (a', x, e1, e2)
+      | x, e2 -> T.Expr.ELetIn (x, e1, e2)
+    ;;
+
+    let repack a x e1 e2 t =
+      let tc = List.map (fun (Ex a : Ex.tvar) : Ex.typ -> Ex (T.Type.TVar a)) a in
+      unpack a x e1 (pack a tc t e2)
+    ;;
+
+    let singleton t =
+      T.Expr.ERecord [ Var.typ, T.Expr.ELam (T.Var.fresh (), t, T.Expr.ERecord []) ]
+    ;;
+
+    let wrap e = T.Expr.ERecord [ Var.wrap, e ]
+    let unwrap e = T.Expr.EProj (e, Var.wrap)
+    let eff_lam x t eff e = T.Expr.ELam (x, t, T.Expr.ERecord [ Var.eff eff, e ])
+    let eff_app e1 eff e2 = T.Expr.EProj (T.Expr.EApp (e1, e2), Var.eff eff)
+    let ty_lam (Ex a : Ex.tvar) e = T.Expr.ETyLam (a, e)
+    let ty_app e (Ex t : typ) = T.Expr.ETyApp (e, t)
+  end
+end
+
+module Mapping = struct
+  type 'a t =
+    | MRecord of (S.Var.t * 'a t) list
+    | MType of 'a
+
+  let empty = MRecord []
+
+  let get p m =
+    let rec aux = function
+      | S.Path.Rev.RPNil, MType t -> Some t
+      | S.Path.Rev.RPNil, _ -> invalid_arg "Mapping.get"
+      | S.Path.Rev.RPProj (r, x), MRecord xs ->
+        (match List.assoc_opt x xs with
+         | Some m -> aux (r, m)
+         | None -> None)
+      | S.Path.Rev.RPProj _, _ -> invalid_arg "Mapping.get"
+      | S.Path.Rev.RPApp (r, _), m -> aux (r, m)
+    in
+    let _, r = S.Path.rev p in
+    aux (r, m)
   ;;
 
-  let expected_concrete_type = expected_type "a concrete type"
-  let expected_singleton_type = expected_type "a singleton"
-  let expected_record_type = expected_type "a record"
-  let expected_function_type = expected_type "a function"
-  let expected_boolean_type = expected_type "a boolean"
-  let expected_wrapped_type = expected_type "a wrapped type"
-
-  let subtype_type_mismatch ?span t' t =
-    let pp = error ?span "type mismatch, expected %a, but got %a" in
-    pp Middle.PP.pp_typ t Middle.PP.pp_typ t'
+  let to_list m =
+    let rec aux acc = function
+      | MRecord xs -> List.fold_left (fun acc (_, m) -> aux acc m) acc xs
+      | MType t -> t :: acc
+    in
+    List.rev (aux [] m)
   ;;
 
-  let undefined_record_field ?span id =
-    error ?span "undefined record field %a" Surface.PP.pp_ident id
+  let rec map f = function
+    | MRecord xs -> MRecord (List.map (fun (x, m) -> x, map f m) xs)
+    | MType t -> MType (f t)
   ;;
 
-  let unbound_variable ?span id =
-    error ?span "unbound variable `%a'" Surface.PP.pp_ident id
+  let of_kind k =
+    let arrow (Ex k1 : Ex.kind) (Ex k2 : Ex.kind) : Ex.kind =
+      Ex (T.Kind.KArrow (k1, k2))
+    in
+    let rec aux args = function
+      | S.Kind.KType -> MType (List.fold_right arrow args (Ex KType : Ex.kind))
+      | S.Kind.KArrow (k1, k2) -> aux (args @ to_list (aux [] k1)) k2
+      | S.Kind.KRecord xs -> MRecord (List.map (fun (x, k) -> x, aux args k) xs)
+    in
+    aux [] k
+  ;;
+
+  let of_tvar a =
+    of_kind (S.TVar.kind a) |> map (fun (Ex k : Ex.kind) : Ex.tvar -> Ex (T.TVar.fresh k))
   ;;
 end
 
 module Env : sig
-  open Type
-  open Expr
-  open Field
-
   type t
 
   val empty : t
-  val add_var : Ident.t -> ttyp -> t -> Var.t * t
-  val add_tvar : 'k TVar.t -> t -> t
-  val add_tvars : TVar.ex list -> t -> t
-  val add_qtyp : Ident.t -> TVar.ex list -> ttyp -> t -> Var.t * t
-  val add_record : TVar.ex list -> (field * ttyp) list -> t -> Var.t list * t
-  val find_var : Ident.t -> t -> Var.t * ttyp
+  val add_var : S.Var.t -> t -> t * T.Var.t
+  val find_var : S.Var.t -> t -> T.Var.t
+  val add_tvar : S.TVar.t -> t -> t * Ex.tvar list
+  val find_tvar : S.TVar.t -> t -> Ex.tvar Mapping.t
+  val enter_mod : S.TVar.t -> t -> t
+  val enter_field : S.Var.t -> t -> t
+  val enter_lam : S.TVar.t -> t -> t
+  val path : t -> S.TVar.t S.Path.t
 end = struct
-  open Field
-  open Type
+  type t =
+    { vars : T.Var.t S.Var.Map.t
+    ; tvars : Ex.tvar Mapping.t S.TVar.Map.t
+    ; path : S.TVar.t S.Path.t
+    }
 
-  type t = (Var.t * ttyp) Ident.Map.t
+  let empty = { vars = S.Var.Map.empty; tvars = S.TVar.Map.empty; path = S.Path.empty }
 
-  let empty = Ident.Map.empty
-
-  let add_var id t env =
-    let x = Var.fresh ?name:(Ident.name id.data) () in
-    x, Ident.Map.add id.data (x, t) env
+  let add_var x env =
+    let x' = T.Var.fresh ~name:(S.Var.name x) () in
+    debug (fun m -> m ~header:"var" "%a -> %a" S.Var.pp x T.Var.pp x');
+    { env with vars = S.Var.Map.add x x' env.vars }, x'
   ;;
 
-  let add_tvar _x env = env
-  let add_tvars _ats env = env
+  let find_var x env = S.Var.Map.find x env.vars
 
-  let add_qtyp x ats t env =
-    let env = add_tvars ats env in
-    add_var x t env
+  let add_tvar a env =
+    let mapping = Mapping.of_tvar a in
+    { env with tvars = S.TVar.Map.add a mapping env.tvars }, Mapping.to_list mapping
   ;;
 
-  let add_record ats ts env =
-    let ident = function
-      | FNamed name -> { data = Ident.Named name; span = None }
-      | FSynthetic id -> { data = Ident.Synthetic id; span = None }
-    in
-    let add_field (f, t) (xs, env) =
-      let x, env = add_var (ident f) t env in
-      x :: xs, env
-    in
-    let env = add_tvars ats env in
-    List.fold_right add_field ts ([], env)
-  ;;
-
-  let find_var id env =
-    match Ident.Map.find_opt id.data env with
-    | Some (x, t) -> x, Subst.subst Subst.empty t
-    | None -> Error.unbound_variable ?span:id.span id
-  ;;
+  let find_tvar a env = S.TVar.Map.find a env.tvars
+  let enter_mod a env = { env with path = S.Path.PVar a }
+  let enter_field x env = { env with path = S.Path.PProj (env.path, x) }
+  let enter_lam a env = { env with path = S.Path.PApp (env.path, a) }
+  let path env = env.path
 end
 
-module Subtype = struct
-  open Type
-  open Expr
+module Type = struct
+  let rec typ env t =
+    trace
+      (fun m -> m ~header:"typ" "%a" S.Type.pp t)
+      (fun t m -> m ~header:"typ" "~> %t" (fun ppf -> T.Type.pp ppf t))
+    @@ fun () ->
+    match S.Type.view t with
+    | TInfer _ -> assert false
+    | TPrim p -> T.Type.TPrim p
+    | TAbstr p ->
+      let (Ex t : Ex.typ) = path env p in
+      (match T.Type.kind t with
+       | KType -> t
+       | _ -> assert false)
+    | TArrow (_, t1, eff, t2) ->
+      let a, t1 = S.Type.as_module t1 in
+      let env, aks = Env.add_tvar a env in
+      let t1 = typ (Env.enter_mod a env) t1
+      and t2 = typ (Env.enter_lam a env) t2 in
+      let t = Sugar.Type.eff_arrow t1 eff t2 in
+      List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) aks t
+    | TRecord xs -> T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs)
+    | TSingleton t -> Sugar.Type.singleton (typ env t)
+    | TWrapped t -> Sugar.Type.wrap (typ env t)
+    | TMod (a, t) ->
+      let env, aks = Env.add_tvar a env in
+      let t = typ (Env.enter_mod a env) t in
+      List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TExists (a, t)) aks t
 
-  let ident_of_field ?span = function
-    | Field.FNamed name -> { data = Ident.Named name; span }
-    | Field.FSynthetic id -> { data = Ident.Synthetic id; span }
-  ;;
-
-  let path_matches ps t =
-    match Type.as_path t with
-    | Some p -> Path.Set.mem p ps
-    | None -> false
-  ;;
-
-  let path_subst t p =
-    let rec aux : type k. k typ -> k path -> _ =
-      fun t -> function
-        | TVar x -> Subst.add x t Subst.empty
-        | TApp (p, x) -> aux (TLam (x, t)) p
+  and path env p =
+    trace
+      (fun m -> m ~header:"path" "")
+      (fun (Ex t : Ex.typ) m -> m ~header:"path" "~> %t" (fun ppf -> T.Type.pp ppf t))
+    @@ fun () ->
+    let rec aux = function
+      | S.Path.PVar a -> Env.find_tvar a env, Fun.id
+      | S.Path.PApp (p, tc) ->
+        (match aux p with
+         | m, app -> m, fun t1 -> List.fold_left Sugar.Type.app (app t1) (cons env tc))
+      | S.Path.PProj (p, x) ->
+        (match aux p with
+         | MRecord ms, app -> List.assoc x ms, app
+         | _, _ -> assert false)
     in
-    aux t p
-  ;;
+    match aux p with
+    | MType (Ex t), app -> app (Ex (T.Type.TVar t))
+    | _, _ -> assert false
 
-  let paths_of_tvars ats =
-    let f = fun ps (TVar.Ex a) -> Path.Set.add (TVar a) ps in
-    List.fold_left f Path.Set.empty ats
-  ;;
-
-  let sub_pack sub ats =
-    let f (TVar.Ex a) = TPack (a, Subst.find a sub) in
-    List.map f ats
-  ;;
-
-  let rec _qsubtype env t' t ps =
-    let open Type in
-    let open Expr in
-    match t', t with
-    | TExists ([], t'), TExists ([], t) -> subtype env t' t ps
-    | TExists (ats', t'), TExists (ats, t) ->
-      let sub, f = subtype (Env.add_tvars ats' env) t' t (paths_of_tvars ats) in
-      let f env x =
-        let y = Var.fresh () in
-        let e = EPack (f env (EVar y), sub_pack sub ats, t) in
-        EUnpack (ats', y, TExists (ats', t'), x, e)
-      in
-      Subst.empty, f
-
-  and _subtype env t' t ps =
-    match t', t with
-    | TPrim p', TPrim p when p' = p -> Subst.empty, fun _ e -> e
-    | TPrim _, _ -> Error.subtype_type_mismatch t' t
-    | TSingleton (TExists ([], t')), TSingleton (TExists ([], t))
-      when Type.is_small t' && path_matches ps t ->
-      path_subst t' (Type.as_path t |> Option.get), fun _ e -> e
-    | TNeu n', TNeu n ->
-      let rec aux : type k1 k2. k1 neutral -> k2 neutral -> (k1, k2) eq =
-        fun n' n ->
-        match n', n with
-        | TVar a', TVar a ->
-          (match TVar.hequal a' a with
-           | Some eq -> eq
-           | None -> Error.subtype_type_mismatch t' t)
-        | TVar _, _ -> Error.subtype_type_mismatch t' t
-        | TApp (n', t'), TApp (n, t) ->
-          let Equal = aux n' n in
-          (match Kind.hequal (Type.kind t) KType with
-           | Some Equal ->
-             equiv env (t' : ttyp) (t : ttyp);
-             Equal
-           | None -> Error.subtype_type_mismatch t' t)
-        | TApp _, _ -> Error.subtype_type_mismatch t' t
-      in
-      let _ = aux n' n in
-      Subst.empty, fun _ e -> e
-    | TNeu _, _ -> Error.subtype_type_mismatch t' t
-    | TSingleton t', TSingleton t ->
-      qequiv env t' t;
-      Subst.empty, fun _ _ -> ESingleton t
-    | TSingleton _, _ -> Error.subtype_type_mismatch t' t
-    | TWrapped t', TWrapped t ->
-      qequiv env t' t;
-      Subst.empty, fun _ e -> e
-    | TWrapped _, _ -> Error.subtype_type_mismatch t' t
-    | TEffArrow (ats', t1', eff', t2'), TEffArrow (ats, t1, eff, t2)
-      when Effect.sub eff' eff ->
-      let add_args ats p =
-        let f (TVar.Ex a) p =
-          match p with
-          | Some (Path.Set.Ex p) ->
-            (match Path.kind p, TVar.kind a with
-             | KArrow (k1, _), k1' ->
-               (match Kind.hequal k1 k1' with
-                | Some Equal -> Some (Path.Set.Ex (TApp (p, a)))
-                | _ -> None)
-             | _, _ -> None)
-          | None -> None
-        in
-        List.fold_right f ats (Some p)
-      in
-      (* TODO: δ₂Σ = Σ *)
-      let sub1, fe1 = subtype (Env.add_tvars ats env) t1 t1' (paths_of_tvars ats') in
-      let ps' = Path.Set.filter_map (add_args ats) ps in
-      let sub2, fe2 = qsubtype (Env.add_tvars ats env) (Subst.qsubst sub1 t2') t2 ps' in
-      let f env x =
-        let y = Var.fresh () in
-        let ts = List.map (fun (TVar.Ex a) -> Type.Ex (Type.Subst.find a sub1)) ats' in
-        let e = EEffApp (x, ts, fe1 env (EVar y), eff') in
-        EEffLam (ats, y, t1, eff, fe2 env e)
-      in
-      sub2, f
-    | TEffArrow _, _ -> Error.subtype_type_mismatch t' t
-    | TRecord fs', TRecord fs ->
-      let rec aux = function
-        | _, [], _ -> Subst.empty, []
-        | ts', (l, t) :: ts, p ->
-          (match List.assoc_opt l ts' with
-           | Some t' ->
-             let sub, f = subtype env t' t p in
-             let ts = List.map (fun (l, t) -> l, Subst.subst sub t) ts in
-             let subs, fs = aux (ts', ts, p) in
-             Subst.merge_disjoint sub subs, f :: fs
-           | None -> Error.undefined_record_field (ident_of_field l))
-      in
-      let ts, fes = aux (fs', fs, ps) in
-      let f env x =
-        let ts = List.map2 (fun f (l, _) -> l, f env (EProj (x, l))) fes fs in
-        ERecord ts
-      in
-      ts, f
-    | TRecord _, _ -> Error.subtype_type_mismatch t' t
-
-  and equiv env t' t =
-    let _, _ = subtype env t' t Path.Set.empty
-    and _, _ = subtype env t t' Path.Set.empty in
-    ()
-
-  and qequiv env t' t =
-    let _, _ = qsubtype env t' t Path.Set.empty
-    and _, _ = qsubtype env t t' Path.Set.empty in
-    ()
-
-  and subtype env t' t ps =
-    Tracing.trace4 trace "subtype" _subtype env t' t ps
-    @@ fun tr f ->
-    Middle.PP.(Tracing.printf tr "%a <= %a %a" pp_typ t' pp_typ t PP.pp_paths ps);
-    let sub, fe = f () in
-    Tracing.printf tr "%a, %a" (PP.pp_subst sub) ps (PP.pp_expr_fun env) fe;
-    sub, fe
-
-  and qsubtype env t' t ps =
-    Tracing.trace4 trace "subtype" _qsubtype env t' t ps
-    @@ fun tr f ->
-    Middle.PP.(Tracing.printf tr "%a <= %a %a" pp_qtyp t' pp_qtyp t PP.pp_paths ps);
-    let sub, fe = f () in
-    Tracing.printf tr "%a, %a" (PP.pp_subst sub) ps (PP.pp_expr_fun env) fe;
-    sub, fe
+  and cons env tc =
+    let rec aux env = function
+      | S.Type.CType t -> [ (Ex (typ env t) : Ex.typ) ]
+      | S.Type.CLam (a1, tc) ->
+        let lam (Ex a : Ex.tvar) (Ex c : Ex.typ) : Ex.typ = Ex (T.Type.TLam (a, c)) in
+        let env, args = Env.add_tvar a1 env in
+        let c2 = aux env tc in
+        List.map (fun c -> List.fold_right lam args c) c2
+      | S.Type.CRecord xs -> List.concat_map (fun (_, k) -> aux env k) xs
+    in
+    aux env tc
   ;;
 end
 
 module Elab = struct
-  let tvar name kind =
-    match name with
-    | Some { data; _ } -> TVar.fresh ?name:(Ident.name data) kind
-    | None -> TVar.fresh kind
-  ;;
-
-  let var name =
-    match name with
-    | Some { data; _ } -> Var.fresh ?name:(Ident.name data) ()
-    | None -> Var.fresh ()
-  ;;
-
-  let field { data; _ } =
-    match data with
-    | Ident.Named name -> Field.FNamed name
-    | Ident.Synthetic id -> Field.FSynthetic id
-  ;;
-
-  let const = function
-    | Prim.ConstUnit _ -> Prim.PrimUnit
-    | Prim.ConstInt _ -> Prim.PrimInt
-    | Prim.ConstFloat _ -> Prim.PrimFloat
-    | Prim.ConstBool _ -> Prim.PrimBool
-    | Prim.ConstString _ -> Prim.PrimString
-  ;;
-
-  let paths_of_tvars ats =
-    let f = fun (Type.TVar.Ex x) -> Type.Path.Ex (TVar x) in
-    List.map f ats
-  ;;
-
-  let ats_repack ats =
-    let f (Type.TVar.Ex a) = Expr.TPack (a, TNeu (TVar a)) in
-    List.map f ats
-  ;;
-
-  let sub_pack sub ats =
-    let f (Type.TVar.Ex a) = Expr.TPack (a, Type.Subst.find a sub) in
-    List.map f ats
-  ;;
-
-  let rec _typ ?name env { data; span } =
-    let open Effect in
-    let open Kind in
-    let open Type in
-    let skolemize ats1 ats2 =
-      let rec aux : type k. _ -> k kind -> _ -> _ * k neutral =
-        fun x k -> function
-          | [] -> TVar.rekind k x |> fun y -> TVar.Ex y, TVar y
-          | TVar.Ex a :: ats ->
-            let y, t = aux x (KArrow (TVar.kind a, k)) ats in
-            y, TApp (t, TNeu (TVar a))
+  let rec expr env e =
+    trace
+      (fun m -> m ~header:"expr" "%a" S.Expr.pp e)
+      (fun (_, e) m -> m ~header:"expr" "~> %a" T.Expr.pp e)
+    @@ fun () ->
+    match e with
+    | S.Expr.EVar x -> [], T.Expr.EVar (Env.find_var x env)
+    | S.Expr.EConst c -> [], T.Expr.EConst c
+    | S.Expr.ECond (x, e1, e2, _) ->
+      let aks1, e1 = expr env e1
+      and aks2, e2 = expr env e2 in
+      let _ =
+        let eq (Ex a1 : Ex.tvar) (Ex a2 : Ex.tvar) =
+          T.Kind.hequal (T.TVar.kind a1) (T.TVar.kind a2) <> None
+        in
+        assert (List.equal eq aks1 aks2)
       in
-      let f sub (TVar.Ex x) =
-        let y, t = aux x (TVar.kind x) ats1 in
-        Subst.add x (TNeu t) sub, y
+      aks1, T.Expr.ECond (EVar (Env.find_var x env), e1, e2)
+    | S.Expr.EStruct (xs, ts) ->
+      let env, xs = List.fold_left_map bind env xs in
+      let aux (x, _) = S.Var.name x, T.Expr.EVar (Env.find_var x env) in
+      let e = T.Expr.ERecord (List.map aux ts) in
+      let aks = List.concat_map fst xs in
+      let tc = List.map (fun (Ex a : Ex.tvar) : Ex.typ -> Ex (T.Type.TVar a)) aks in
+      let t = Type.typ env (S.Type.TRecord ts |> S.Type.wrap) in
+      let e = Sugar.Expr.pack aks tc t e in
+      aks, List.fold_right (fun (_, f) e -> f e) xs e
+    | S.Expr.EProj (e, x, t) ->
+      let tmp = T.Var.fresh ()
+      and aks, e1 = expr env e in
+      let e2 = T.Expr.EProj (EVar tmp, S.Var.name x) in
+      let e = Sugar.Expr.repack aks tmp e1 e2 (Type.typ env t) in
+      aks, e
+    | S.Expr.EFun (x, t, eff, e) ->
+      let a, t = S.Type.as_module t in
+      let env, a = Env.add_tvar a env in
+      let t1 = Type.typ env t in
+      let env, x = Env.add_var x env in
+      let aks, e = expr env e in
+      assert (aks = []);
+      let e = Sugar.Expr.eff_lam x t1 eff e in
+      [], List.fold_right (fun (Ex a : Ex.tvar) e -> T.Expr.ETyLam (a, e)) a e
+    | S.Expr.EApp (e1, tc, eff, e2) ->
+      let e =
+        let e = List.fold_left Sugar.Expr.ty_app (snd (expr env e1)) (Type.cons env tc) in
+        let env = Env.enter_mod S.TVar.empty env in
+        let e = Sugar.Expr.eff_app e eff (snd (expr env e2)) in
+        e
       in
-      let sub, ats2 = List.fold_left_map f Subst.empty ats2 in
-      ats2, sub
+      [], e
+    | S.Expr.EType t -> [], Sugar.Expr.singleton (Type.typ env t)
+    | S.Expr.EExtern (s, t) -> [], T.Expr.EExtern (s, Type.typ env t)
+    | S.Expr.EWrap (e, _) -> [], Sugar.Expr.wrap (expr env e |> snd)
+    | S.Expr.EUnwrap e -> [], Sugar.Expr.unwrap (snd (expr env e))
+    | S.Expr.ESeal (e, tc, s) ->
+      let x = T.Var.fresh () in
+      let env', aks', e1 =
+        let a', e = S.Expr.as_module e in
+        let env', aks' = Env.add_tvar a' env in
+        let env' = Env.enter_mod a' env' in
+        let _, e1 = expr env' e in
+        env', aks', e1
+      in
+      let e2 =
+        let a, s = S.Type.as_module s in
+        let env, aks = Env.add_tvar a env in
+        let env = Env.enter_mod a env in
+        Sugar.Expr.pack aks (Type.cons env' tc) (Type.typ env s) (EVar x)
+      in
+      [], Sugar.Expr.unpack aks' x e1 e2
+    | S.Expr.EMod (a, e) ->
+      let env, aks = Env.add_tvar a env in
+      let env = Env.enter_mod a env in
+      let aks', e = expr env e in
+      let _ =
+        let eq (Ex a : Ex.tvar) (Ex a' : Ex.tvar) =
+          T.Kind.hequal (T.TVar.kind a) (T.TVar.kind a') <> None
+        in
+        assert (List.equal eq aks aks')
+      in
+      [], e
+    | S.Expr.EUse e ->
+      let rec aux = function
+        | S.Path.PVar a -> Env.find_tvar a env
+        | S.Path.PApp (p, _) -> aux p
+        | S.Path.PProj (p, x) ->
+          (match aux p with
+           | MRecord ms -> List.assoc x ms
+           | _ -> assert false)
+      in
+      let aks, e = expr env e in
+      assert (List.is_empty aks);
+      aux (Env.path env) |> Mapping.to_list, e
+
+  and bind env b =
+    trace
+      (fun m -> m ~header:"bind" "%a" S.Expr.pp_bind b)
+      (fun _ m -> m ~header:"bind" "")
+    @@ fun () ->
+    let proj tmp env (x, _) =
+      let env, x' = Env.add_var x env in
+      env, fun e -> T.Expr.ELetIn (x', EProj (EVar tmp, S.Var.name x), e)
     in
-    match data with
-    | S.TPrim p -> TExists ([], TPrim p)
-    | S.TType ->
-      let a = tvar name KType in
-      let typ = TExists ([], TNeu (TVar a)) in
-      TExists ([ TVar.Ex a ], Middle.Type.TSingleton typ)
-    | S.TExpr e ->
-      (match expr env e with
-       | Pure, TExists ([], TSingleton t), _ -> t
-       | Pure, t', _ -> Error.expected_singleton_type ?span t'
-       | Impure, _, _ -> Error.expected_pure_expression ?span e)
-    | S.TWith (t1, ids, t2) ->
-      let rec proj t ids =
-        match t, ids with
-        | t, [] -> t
-        | TRecord ts, id :: ids ->
-          (match List.assoc_opt (field id) ts with
-           | Some t -> proj t ids
-           | None -> Error.undefined_record_field ?span:id.span id)
-        | t, _ -> Error.expected_record_type ?span:t1.span (TExists ([], t))
-      in
-      let (TExists (ats1, t1)) = typ env t1
-      and (TExists (ats2, t2)) = typ env t2 in
-      let t = proj t1 ids in
-      let free = Type.free t in
-      let ats11 = List.filter (fun (TVar.Ex a) -> not (TVar.Set.mem a free)) ats1 in
-      let ats12 = List.filter (fun (TVar.Ex a) -> TVar.Set.mem a free) ats1 in
-      let env' = env |> Env.add_tvars ats11 |> Env.add_tvars ats2 in
-      let sub, _ = Subtype.subtype env' t2 t (Subtype.paths_of_tvars ats12) in
-      TExists (ats11 @ ats2, Subst.subst sub t1)
-    | S.TStruct xs ->
-      let a, t = decl env xs in
-      TExists (a, TRecord t)
-    | S.TArrow (x, t1, Impure, t2) ->
-      let (TExists (ats1, t1)) = typ ~name:x env t1 in
-      let (TExists (ats2, t2)) = typ (Env.add_qtyp x ats1 t1 env |> snd) t2 in
-      TExists ([], TEffArrow (ats1, t1, Impure, TExists (ats2, t2)))
-    | S.TArrow (x, t1, Pure, t2) ->
-      let (TExists (ats1, t1)) = typ ~name:x env t1 in
-      let (TExists (ats2, t2)) = typ (Env.add_qtyp x ats1 t1 env |> snd) t2 in
-      let ats2, sub = skolemize ats1 ats2 in
-      TExists (ats2, TEffArrow (ats1, t1, Pure, TExists ([], Subst.subst sub t2)))
-    | S.TSingleton e ->
-      (match expr env e with
-       | Pure, t, _ -> t
-       | Impure, _, _ -> Error.expected_pure_expression ?span e)
-    | S.TWrapped t ->
-      let t = typ env t in
-      TExists ([], TWrapped t)
+    match b with
+    | S.Expr.BIncl (_, e, ts) ->
+      let tmp = T.Var.fresh () in
+      let aks, e = expr env e in
+      let env, fs = List.fold_left_map (proj tmp) env ts in
+      let f = List.fold_right (fun f e -> f e) fs in
+      let f = Fun.compose (Sugar.Expr.unpack aks tmp e) f in
+      env, (aks, f)
+    | S.Expr.BVal (_, x, e) ->
+      let env' = Env.enter_field x env in
+      let aks, e = expr env' e in
+      let env, x = Env.add_var x env in
+      env, (aks, Sugar.Expr.unpack aks x e)
+  ;;
 
-  and decl env = function
-    | [] -> [], []
-    | { data = S.DVal (x, t); _ } :: ds ->
-      let (TExists (ats1, t1)) = typ ~name:x env t in
-      let ats2, t2 = decl (Env.add_qtyp x ats1 t1 env |> snd) ds in
-      ats1 @ ats2, (field x, t1) :: t2
-    | { data = S.DOpen t; _ } :: ds ->
-      (match typ env t with
-       | TExists (ats1, TRecord t1) ->
-         let _, env = Env.add_record ats1 t1 env in
-         let ats2, t2 = decl env ds in
-         ats1 @ ats2, t2
-       | t' -> Error.expected_record_type ?span:t.span t')
-    | { data = S.DIncl t; _ } :: ds ->
-      (match typ env t with
-       | TExists (ats1, TRecord t1) ->
-         let _, env = Env.add_record ats1 t1 env in
-         let ats2, t2 = decl env ds in
-         ats1 @ ats2, t1 @ t2
-       | t' -> Error.expected_record_type ?span:t.span t')
-
-  and _expr ?name env ({ data; span } : Surface.Ast.expr) =
-    let open Effect in
-    let open Type in
-    let open Expr in
-    match data with
-    | EVar x ->
-      let x, t = Env.find_var x env in
-      Pure, TExists ([], t), EVar x
-    | EConst c -> Pure, TExists ([], TPrim (const c)), EConst c
-    | ECond (x, e1, e2, t) ->
-      (match Env.find_var x env with
-       | x, TPrim PrimBool ->
-         let eff1, t1, e1 = expr env e1
-         and eff2, t2, e2 = expr env e2
-         and (TExists (ats, t)) = typ env t in
-         let _, fe1 = Subtype.qsubtype env t1 (TExists (ats, t)) Path.Set.empty
-         and _, fe2 = Subtype.qsubtype env t2 (TExists (ats, t)) Path.Set.empty in
-         let eff = if ats = [] then Effect.join eff1 eff2 else Impure in
-         let t = TExists (ats, t) in
-         let e = ECond (EVar x, fe1 env e1, fe2 env e2) in
-         eff, t, e
-       | _, t -> Error.expected_boolean_type ?span:x.span (TExists ([], t)))
-    | EStruct bs -> bind env bs
-    | EProj (e, l) ->
-      (match expr env e, field l with
-       | (eff, TExists (ats, TRecord ts), e), f ->
-         (match List.assoc_opt f ts with
-          | Some t ->
-            let y = var name
-            and t0 = TExists (ats, TRecord ts)
-            and ats, sub = Subst.add_fresh_tvars ats Subst.empty in
-            let t = Subst.subst sub t in
-            let e =
-              EUnpack (ats, y, t0, e, EPack (EProj (EVar y, f), ats_repack ats, t))
-            in
-            eff, TExists (ats, t), e
-          | None -> Error.undefined_record_field ?span l)
-       | (_, t, _), _ -> Error.expected_record_type ?span:e.span t)
-    | EFun (x, t, e) ->
-      let (TExists (ats1, t1)) = typ ~name:x env t in
-      let x, env = Env.add_qtyp x ats1 t1 env in
-      let eff, t2, e = expr env e in
-      let t = TExists ([], TEffArrow (ats1, t1, eff, t2))
-      and e = EEffLam (ats1, x, t1, eff, e) in
-      Pure, t, e
-    | EApp (x1, x2) ->
-      (match Env.find_var x1 env, Env.find_var x2 env with
-       | (x1, TEffArrow (ats1, t1, eff, t)), (x2, t2) ->
-         let sub, fe = Subtype.subtype env t2 t1 (Subtype.paths_of_tvars ats1) in
-         let ts = List.map (fun (TVar.Ex a) -> Ex (Subst.find a sub)) ats1 in
-         let e = EEffApp (EVar x1, ts, fe env (EVar x2), eff) in
-         eff, Subst.qsubst sub t, e
-       | (_, t), _ -> Error.expected_function_type ?span (TExists ([], t)))
-    | EType t ->
-      let t = typ ?name env t in
-      Pure, TExists ([], TSingleton t), ESingleton t
-    | ESeal (x, t) ->
-      let x, t1 = Env.find_var x env
-      and (TExists (ats2, t2)) = typ env t in
-      let sub, fe = Subtype.subtype env t1 t2 (Subtype.paths_of_tvars ats2) in
-      let eff = if ats2 = [] then Pure else Impure in
-      let e = EPack (fe env (EVar x), sub_pack sub ats2, t2) in
-      eff, TExists (ats2, t2), e
-    | EWrap (x, t) ->
-      (match Env.find_var x env, typ env t with
-       | (x, t'), TExists ([], TWrapped t) ->
-         let _, fe = Subtype.qsubtype env (TExists ([], t')) t Path.Set.empty in
-         Pure, TExists ([], TWrapped t), EWrap (fe env (EVar x))
-       | _, t -> Error.expected_wrapped_type ?span t)
-    | EUnwrap (x, t) ->
-      (match Env.find_var x env, typ env t with
-       | (x, TWrapped t'), TExists ([], TWrapped t) ->
-         let _, fe = Subtype.qsubtype env t' t Path.Set.empty in
-         let (TExists (ats, _)) = t in
-         (if ats = [] then Pure else Impure), t, fe env (EUnwrap (EVar x))
-       | (_, TWrapped _), t' -> Error.expected_wrapped_type ?span:t.span t'
-       | (_, t'), _ -> Error.expected_wrapped_type ?span:t.span (TExists ([], t')))
-    | EExternal (s, t) ->
-      (match typ ~name:{ data = Named s; span = None } env t with
-       | TExists ([], t) -> Pure, TExists ([], t), EExternal (s, t)
-       | t' -> Error.expected_concrete_type ?span:t.span t')
-
-  and bind env bs =
-    let open Effect in
-    let open Type in
-    let open Expr in
-    let rec aux env eff1 ats1 fields = function
-      | [] ->
-        let fields = List.uniq_by (fun (l1, _, _) (l2, _, _) -> l1 = l2) fields in
-        let ts = List.rev_map (fun (l, t, _) -> l, t) fields
-        and es = List.rev_map (fun (l, _, e) -> l, e) fields
-        and ats = List.rev ats1 in
-        let e = EPack (ERecord es, ats_repack ats, TRecord ts) in
-        eff1, TExists (ats, TRecord ts), e
-        (* TODO: These three arms can be simplified/merged *)
-      | { data = S.BVal (x, e); _ } :: bs ->
-        let eff2, TExists (ats2, t2), e2 = expr env e in
-        let l, (x, env) = field x, Env.add_qtyp x ats2 t2 env in
-        let eff = Effect.join eff1 eff2
-        and ats = List.rev_append ats1 ats2
-        and fields = (l, t2, EVar x) :: fields in
-        let eff, t, e = aux env eff ats fields bs in
-        eff, t, EUnpack (ats2, x, TExists (ats2, t2), e2, e)
-      | { data = S.BIncl e; _ } :: bs ->
-        let aux_f x (l, t) = l, t, EVar x
-        and aux_e y e x (l, t) = ELet (x, TExists ([], t), EProj (EVar y, l), e) in
-        (match expr env e with
-         | eff2, TExists (ats2, TRecord t2), e2 ->
-           let xs, env = Env.add_record ats2 t2 env in
-           let eff = Effect.join eff1 eff2
-           and ats = List.rev_append ats1 ats2
-           and fields = List.rev_append (List.map2 aux_f xs t2) fields in
-           let eff, t, e = aux env eff ats fields bs in
-           let y = Var.fresh () in
-           let e = List.fold_left2 (aux_e y) e xs t2 in
-           let e = EUnpack (ats2, y, TExists (ats2, TRecord t2), e2, e) in
-           eff, t, e
-         | _, t, _ -> Error.expected_record_type ?span:e.span t)
-      | { data = S.BOpen e; _ } :: bs ->
-        let aux_e y e x (l, t) = ELet (x, TExists ([], t), EProj (EVar y, l), e) in
-        (match expr env e with
-         | eff2, TExists (ats2, TRecord t2), e2 ->
-           let xs, env = Env.add_record ats2 t2 env in
-           let eff = Effect.join eff1 eff2
-           and ats = List.rev_append ats1 ats2 in
-           let eff, t, e = aux env eff ats fields bs in
-           let y = Var.fresh () in
-           let e = List.fold_left2 (aux_e y) e xs t2 in
-           let e = EUnpack (ats2, y, TExists (ats2, TRecord t2), e2, e) in
-           eff, t, e
-         | _, t, _ -> Error.expected_record_type ?span:e.span t)
-    in
-    aux env Pure [] [] bs
-
-  and typ ?name env t =
-    Tracing.trace2 trace "type" (_typ ?name) env t
-    @@ fun tr f ->
-    Tracing.printf tr "%a" Surface.PP.pp_typ t;
-    let t = f () in
-    Tracing.printf tr "~> %a" Middle.PP.pp_qtyp t;
-    t
-
-  and expr ?name env e =
-    Tracing.trace2 trace "expr" (_expr ?name) env e
-    @@ fun tr f ->
-    Tracing.printf tr "%a" Surface.PP.pp_expr e;
-    let eff, t, e = f () in
-    Tracing.printf tr "~> %a" Middle.PP.pp_expr e;
-    Tracing.printf tr ":: %a" Middle.PP.pp_qtyp t;
-    eff, t, e
+  let file env node =
+    trace
+      (fun m ->
+         let expr = Format.with_margin 140 S.Expr.pp_expr in
+         let expr = Format.with_max_boxes Int.max_int expr in
+         m ~header:"file" "%a" expr node)
+      (fun t m ->
+         let expr = Format.with_margin 140 T.Expr.pp in
+         let expr = Format.with_max_boxes Int.max_int expr in
+         m ~header:"file" "%a" expr t)
+    @@ fun () -> expr env node |> snd
   ;;
 end

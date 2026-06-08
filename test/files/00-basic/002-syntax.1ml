@@ -1,0 +1,103 @@
+(* bindings *)
+x = ();
+_ = ();
+include {};
+open {};
+x;
+f x = ();
+f x y z = ();
+f (x : unit) = ();
+f 'a = ();
+f '(a : type) = ();
+f _ : unit = ();
+f _ :> unit = ();
+f _ : unit :> unit = ();
+type t = unit;
+type t a b c = unit;
+do ();
+
+(* declarations *)
+type t = {
+  include {};
+  open {};
+  x: unit;
+  f (x: unit): unit;
+  f (x: unit) (y: unit): unit;
+  x = type int;
+  type x = int;
+  type x a b c = int;
+  type x;
+  (* type x a b c; *) (* TODO: this errors *)
+};
+
+(* types *)
+type cell a = a;
+type pair a b = (a, b);
+x = { type t = int };
+type t = unit;
+type t = ();
+type t = type;
+type t = _;
+type t = (= type unit);
+type t = (((unit)));
+type t = x.t;
+type t = { x: unit };
+type t = { x: unit; y: unit; z: unit };
+type t = (unit, unit, unit);
+type t = cell unit;
+type t = pair unit unit;
+type t = wrap unit;
+type t = wrap (wrap unit);
+type t = wrap (pair (wrap unit) unit);
+type t = unit => unit;
+type t = unit -> unit;
+type t = (x: type) => unit;
+type t = (x: type) -> unit;
+type t = (x: { t: type }) => x.t -> unit;
+type t = 'a => a => unit;
+type t = '(a: type) => '(b: type) => a -> b -> unit;
+type t = { type t } with type t = int;
+type t = { x: { type t }; type t } with type x.t = int and type t = int;
+type t = { x: type } with x = type int;
+type t = { x: type } with x: (= type int);
+
+(* expressions *)
+pair x y = (x, y);
+x = ();
+_ = x;
+_ = 42;
+_ = 3.14;
+_ = 'a';
+_ = "hello";
+_ = (1, 2, 3);
+_ = ((()));
+_ = { x = (); y = (); z = () };
+_ = { x = { y = { z = {} } } }.x.y.z;
+_ = pair 0 1;
+_ = unwrap (wrap (): wrap unit): wrap unit;
+_ = if true then () else ();
+_ = if true then () else () : unit;
+_ = true || false;
+_ = true && false;
+_ = fun x => ();
+_ = fun (x: unit) => ();
+_ = let x = () in x;
+_ = let x = let x = () in x in let x = x in x;
+_ = () : unit;
+_ = () :> unit;
+_ = type int;
+_ = type type;
+x ( ** ) (*) (+) (^) (<) = 1 ** 1 * 1 + 1 ^ 1 < 1;
+
+(* patterns *)
+f x = ();
+f _ = ();
+f (_, _) = ();
+f (_, _, _) = ();
+f ((_: unit): unit) = ();
+f { x } = ();
+f { x; y; z } = ();
+f { x = _; y = _; z = _ } = ();
+f (_ : unit) = ();
+f (_ :> unit) = ();
+f (wrap _ : wrap unit) = ();
