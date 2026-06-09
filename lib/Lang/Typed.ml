@@ -396,7 +396,7 @@ module Type = struct
     | TPrim of Prim.t
     | TArrow of Var.t * typ * feff * typ
     | TRecord of (Var.t * typ) list [@printer Format.pp_print_record Var.pp pp_typ]
-    | TSingleton of typ
+    | TSingletonType of typ
     | TWrapped of typ
     | TMod of TVar.t * typ
   [@@deriving show]
@@ -536,7 +536,7 @@ module Type = struct
         typ env t1 && typ env t2
       | TArrow (_, _, (Explicit Pure | Implicit), _) -> false
       | TRecord xs -> List.for_all (fun (_, t) -> typ env t) xs
-      | TSingleton t -> typ env t
+      | TSingletonType t -> typ env t
       | TWrapped _ -> true
       | TMod (a, t) -> typ (TVar.Set.add a env) t
     and path env = function
@@ -557,7 +557,7 @@ module Type = struct
     | TInfer _ | TPrim _ | TWrapped _ | TMod _ -> false
     | TRecord ts -> List.exists (fun (_, t) -> is_generative a t) ts
     | TArrow (_, _, _, t) -> is_generative a t
-    | TSingleton t -> is_generative a t
+    | TSingletonType t -> is_generative a t
   ;;
 
   let eff a t = if is_generative a t then Effect.Impure else Effect.Pure
@@ -582,7 +582,7 @@ module Type = struct
         let env = TVar.Set.add a env in
         typ env t1 && typ env t2
       | TRecord ts -> List.for_all (fun (_, t) -> typ env t) ts
-      | TSingleton t -> typ env t
+      | TSingletonType t -> typ env t
       | TWrapped t -> typ env t
       | TMod (a, t) -> typ (TVar.Set.add a env) t
     and path env = function
@@ -605,7 +605,7 @@ module Type = struct
       | TPrim _ -> false
       | TArrow (_, t1, _, t2) -> typ t1 || typ t2
       | TRecord ts -> List.exists (fun (_, t) -> typ t) ts
-      | TSingleton t -> typ t
+      | TSingletonType t -> typ t
       | TWrapped t -> typ t
       | TMod (_, t) -> typ t
     and path = function
@@ -653,7 +653,7 @@ module Rename = struct
       Type.wrap ?span t
     | TRecord xs ->
       TRecord (List.map (fun (x, t) -> x, typ rename t) xs) |> Type.wrap ?span
-    | TSingleton t -> TSingleton (typ rename t) |> Type.wrap ?span
+    | TSingletonType t -> TSingletonType (typ rename t) |> Type.wrap ?span
     | TWrapped t -> TWrapped (typ rename t) |> Type.wrap ?span
     | TMod (a, t) ->
       let a, rename = freshen a rename in
@@ -688,7 +688,7 @@ module Subst = struct
       let b, t1 = as_module t1 in
       TArrow (x, as_type b (typ a f t1), eff, typ a f t2) |> Type.wrap ?span
     | TRecord xs -> TRecord (List.map (fun (x, t) -> x, typ a f t) xs) |> Type.wrap ?span
-    | TSingleton t -> TSingleton (typ a f t) |> Type.wrap ?span
+    | TSingletonType t -> TSingletonType (typ a f t) |> Type.wrap ?span
     | TWrapped t -> TWrapped (typ a f t) |> Type.wrap ?span
     | TMod (b, t) -> TMod (b, typ a f t) |> Type.wrap ?span
 
@@ -736,8 +736,8 @@ module Equal = struct
       let eq (x', t') (x, t) = Var.name x' = Var.name x && typ ~unify t' t in
       List.equal eq ts' ts
     | TRecord _, _ -> false
-    | TSingleton t', TSingleton t -> typ ~unify t' t
-    | TSingleton _, _ -> false
+    | TSingletonType t', TSingletonType t -> typ ~unify t' t
+    | TSingletonType _, _ -> false
     | TWrapped t', TWrapped t -> typ ~unify t' t
     | TWrapped _, _ -> false
     | TMod (a', t'), TMod (a, t) -> typ ~unify (Rename.typ ~rename:(Rename.one a' a) t') t
@@ -862,7 +862,7 @@ module Invariant = struct
     | TRecord xs ->
       let decl (x, t) = typ (Env.enter_field x env) t in
       List.iter decl xs
-    | TSingleton t -> typ env t
+    | TSingletonType t -> typ env t
     | TWrapped t -> typ env t
     | TMod (a, t) ->
       invariant (not (TVar.is_empty a));
@@ -935,7 +935,7 @@ module Invariant = struct
       Subst.typ a (Subst.one tc) t2
     | EType t ->
       typ env t;
-      TSingleton t |> Type.wrap
+      TSingletonType t |> Type.wrap
     | EExtern (_, t) ->
       typ env t;
       t

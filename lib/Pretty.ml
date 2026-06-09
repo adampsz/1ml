@@ -55,7 +55,7 @@ module Abstr = struct
 
   and find_in_type p out env t =
     match T.Type.view t with
-    | TSingleton t -> find_in_singleton p out env t
+    | TSingletonType t -> find_in_singleton p out env t
     | TRecord ts -> find_in_env p out (Env.with_vars ts env)
     | TArrow (x, t1, (Explicit Pure | Implicit), t2) ->
       let a, t1 = T.Type.as_module t1 in
@@ -84,7 +84,7 @@ module Abstr = struct
       | _ when T.Equal.typ t1 (TAbstr p |> T.Type.wrap) -> true
       | TArrow (_, t1, _, t2) -> mentions t1 || mentions t2
       | TRecord ts -> List.exists (fun (_, t) -> mentions t) ts
-      | TSingleton t | TWrapped t | TMod (_, t) -> mentions t
+      | TSingletonType t | TWrapped t | TMod (_, t) -> mentions t
       | TInfer _ | TAbstr _ | TPrim _ -> false
     in
     let rec circular = function
@@ -164,7 +164,7 @@ module Print = struct
     let root_env = Env.at_root env in
     let arg ~prec ppf t =
       match T.Type.view t with
-      | TSingleton t' -> typ ~prec ~env:root_env ppf t'
+      | TSingletonType t' -> typ ~prec ~env:root_env ppf t'
       | _ ->
         let pf = Format.fprintf ppf "@[(_:@ %a@])" in
         pf (typ ~prec:0 ~env:root_env) t
@@ -234,9 +234,9 @@ module Print = struct
         env := Env.add_var k v !env
       in
       record entry ppf ts
-    | TSingleton t' when T.Type.is_path (Env.path env) t' ->
+    | TSingletonType t' when T.Type.is_path (Env.path env) t' ->
       Format.pp_print_string ppf "type"
-    | TSingleton t' ->
+    | TSingletonType t' ->
       Format.fprintf ppf "@[<2>(=@ type %a@;<0 -2>)@]" (typ ~prec:0 ~env) t'
     | TWrapped t -> Format.fprintf ppf "@[<2>wrap@ %a@]" (typ ~prec:3 ~env) t
     | TMod (a, t) -> typ ~prec ~env:(Env.enter_mod a env) ppf t

@@ -140,7 +140,7 @@ module Implicit = struct
     | TRecord ts ->
       let bind (x, t) = T.Expr.BVal (Public, x, materialize env t) in
       T.Expr.EStruct (List.map bind ts, ts)
-    | TSingleton t -> T.Expr.EType t
+    | TSingletonType t -> T.Expr.EType t
     | TWrapped t -> T.Expr.EWrap (materialize env t, TWrapped t |> wrap)
     | TMod (a, t) -> materialize (T.TVar.Set.add a env) t
     | _ -> assert false
@@ -155,7 +155,7 @@ module Implicit = struct
       | TPrim _ -> acc
       | TArrow (_, t1, _, t2) -> typ (typ acc t1) t2
       | TRecord ts -> List.fold_left (fun acc (_, t) -> typ acc t) acc ts
-      | TSingleton t -> typ acc t
+      | TSingletonType t -> typ acc t
       | TWrapped t -> typ acc t
       | TMod (_, t) -> typ acc t
     and path acc = function
@@ -194,7 +194,7 @@ module Implicit = struct
     let resolve z =
       let a = T.TVar.fresh T.Kind.KType in
       T.UVar.set z (TAbstr (PVar a) : T.Type.view);
-      TMod (a, TSingleton (TInfer z |> wrap) |> wrap) |> wrap
+      TMod (a, TSingletonType (TInfer z |> wrap) |> wrap) |> wrap
     in
     match eff with
     | T.Effect.Impure -> e, t
@@ -366,10 +366,10 @@ module Subtype = struct
       in
       acc, f
     | TArrow _, _ -> Error.not_assignable env t' t
-    | TSingleton t', TSingleton t
+    | TSingletonType t', TSingletonType t
       when T.Type.is_path (Env.path env) t && T.Type.is_small t' ->
       Some (T.Type.Cons.set (Env.path env) t' acc), Fun.id
-    | TSingleton ti', TSingleton ti ->
+    | TSingletonType ti', TSingletonType ti ->
       chain (fun cause -> Error.not_assignable ~cause env t' t)
       @@ fun () ->
       let ti = Env.subst (env, acc) ti in
@@ -385,7 +385,7 @@ module Subtype = struct
       let _ = chain @@ fun () -> typ (env, acc) ti' ti
       and _ = chain @@ fun () -> typ (env, acc) ti ti' in
       acc, Fun.id
-    | TSingleton _, _ -> Error.not_assignable env t' t
+    | TSingletonType _, _ -> Error.not_assignable env t' t
     | TWrapped _, _ -> Error.not_assignable env t' t
 
   and equal env tc' tc =
@@ -468,17 +468,17 @@ module Check = struct
     | S.THole -> None, TInfer (T.UVar.fresh (Env.domain env) (Env.path env)) |> wrap ?span
     | S.TType ->
       let abstr = TAbstr (T.Type.path_to_abstr (Env.path env)) |> wrap ?span in
-      Some T.Kind.KType, TSingleton abstr |> wrap ?span
+      Some T.Kind.KType, TSingletonType abstr |> wrap ?span
     | S.TExpr e ->
       let eff, ty, _ = modu_expr env e in
       let _, ty = Implicit.instantiate (Env.domain env) (Env.path env) ty in
       (match eff, view ty with
-       | T.Effect.Pure, TSingleton ty ->
+       | T.Effect.Pure, TSingletonType ty ->
          let k, ty, _ = path_prepend env ty in
          k, T.Type.with_span ?span ty
        | T.Effect.Pure, TInfer z ->
          let ty = TInfer (T.UVar.fresh (Env.domain env) (Env.path env)) |> wrap ?span in
-         assert (T.Type.resolve z (TSingleton ty |> wrap ?span));
+         assert (T.Type.resolve z (TSingletonType ty |> wrap ?span));
          None, ty
        | T.Effect.Pure, _ -> Error.expected_singleton_type ?span env ty
        | _, _ -> Error.expected_pure_expression ?span ())
@@ -509,7 +509,7 @@ module Check = struct
       let k2, t2 = typ (Env.enter_lam a1 env) t2 in
       let eff = if eff = Implicit then T.Type.Implicit else T.Type.Explicit Pure in
       T.Kind.opt_arrow (T.TVar.kind a1) k2, TArrow (x, t1, eff, t2) |> wrap ?span
-    | S.TSingletonType t -> None, TSingleton (modu_typ env t) |> wrap ?span
+    | S.TSingletonType t -> None, TSingletonType (modu_typ env t) |> wrap ?span
     | S.TWrapped t -> None, TWrapped (modu_typ env t) |> wrap ?span
 
   and decl env d =
@@ -639,7 +639,7 @@ module Check = struct
       k2, eff, t2, e
     | S.EType t ->
       let t = modu_typ env t in
-      None, T.Effect.Pure, TSingleton t |> wrap ?span, T.Expr.EType t
+      None, T.Effect.Pure, TSingletonType t |> wrap ?span, T.Expr.EType t
     | S.ESeal (x, t) ->
       let xv, t' = Env.find ?span:(S.Node.span x) (S.Node.data x) env in
       let t = modu_typ env t in

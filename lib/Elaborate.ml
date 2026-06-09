@@ -197,7 +197,7 @@ module Type = struct
       let t = Sugar.Type.eff_arrow t1 eff t2 in
       List.fold_right (fun (Ex a : Ex.tvar) t -> T.Type.TForall (a, t)) aks t
     | TRecord xs -> T.Type.TRecord (List.map (fun (x, t) -> S.Var.name x, typ env t) xs)
-    | TSingleton t -> Sugar.Type.singleton (typ env t)
+    | TSingletonType t -> Sugar.Type.singleton (typ env t)
     | TWrapped t -> Sugar.Type.wrap (typ env t)
     | TMod (a, t) ->
       let env, aks = Env.add_tvar a env in
