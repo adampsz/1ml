@@ -929,7 +929,7 @@ module Invariant = struct
       in
       let a, t1 = Type.as_module t1 in
       let t1' = expr env e1 in
-      cons (Env.add_tvar a env) tc;
+      cons env tc;
       invariant (eff = eff');
       invariant (Equal.typ (Subst.typ a (Subst.one tc) t1) t1');
       Subst.typ a (Subst.one tc) t2
